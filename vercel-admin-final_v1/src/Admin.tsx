@@ -7806,7 +7806,7 @@ function AdminMainContent(props: any) {
                                 backgroundColor: "#000000",
                                 color: "white",
                                 border: "none",
-                                borderRadius: "0",
+                                borderRadius: "2px",
                                 fontSize: "14px",
                                 fontFamily: FONT_STACKS.pretendardVariable,
                                 fontWeight: 600,
@@ -8156,7 +8156,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "30%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
@@ -8194,7 +8194,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "70%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
@@ -8263,7 +8263,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "30%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
@@ -8301,7 +8301,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "70%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
@@ -8370,7 +8370,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "30%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
@@ -8408,7 +8408,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "70%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
@@ -8477,7 +8477,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "30%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
@@ -8515,7 +8515,7 @@ function AdminMainContent(props: any) {
                             <div
                                 style={{
                                     width: "70%",
-                                    height: "calc(40px*1.1429)",
+                                    height: "calc(50px*1.1429)",
                                     padding: 12,
                                     background: "white",
                                     border: `1px solid ${theme.color.border}`,
