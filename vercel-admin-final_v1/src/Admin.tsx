@@ -7647,7 +7647,7 @@ function AdminMainContent(props: any) {
     const isRedeemRoute =
         routePath === "/redeem" || routePath.startsWith("/redeem/")
 
-    const LoginScreen: React.FC = () => {
+    const renderLoginScreen = () => {
         return (
             <div
                 style={{
@@ -7956,7 +7956,7 @@ function AdminMainContent(props: any) {
         )
     }
 
-    const CheckingScreen: React.FC = () => {
+    const renderCheckingScreen = () => {
         return (
             <div
                 style={{
@@ -8003,7 +8003,7 @@ function AdminMainContent(props: any) {
         )
     }
 
-    const RedeemScreen: React.FC = () => {
+    const renderRedeemScreen = () => {
         // 기존 UI 그대로 유지 (URL /redeem 진입 시 즉시 렌더)
         return (
             <div
@@ -8683,12 +8683,12 @@ function AdminMainContent(props: any) {
     // 로그인/리딤 라우팅
     if (!propIsAuthenticated) {
         if (isRedeemRoute || naverFlowState === "needs_code") {
-            return <RedeemScreen />
+            return renderRedeemScreen()
         }
         if (naverFlowState === "checking") {
-            return <CheckingScreen />
+            return renderCheckingScreen()
         }
-        return <LoginScreen />
+        return renderLoginScreen()
     }
     // 관리자 화면
     return (
