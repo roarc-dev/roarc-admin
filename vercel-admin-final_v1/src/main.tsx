@@ -1,6 +1,6 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import Admin from './Admin'
+import Admin from './Admin.tsx'
 
 const container = document.getElementById('root')
 if (!container) {
