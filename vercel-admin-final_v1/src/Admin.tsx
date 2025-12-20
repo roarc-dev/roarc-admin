@@ -16775,13 +16775,58 @@ function InfoTab({
                                         : "",
                             })
                         )
-                        setItems(loaded.length > 0 ? loaded : DEFAULT_ITEMS)
+
+                        // localStorage에서 초기화 플래그 확인
+                        const initFlagKey = `info_section_initialized_${pageId}`
+                        const hasBeenInitialized = typeof window !== "undefined" &&
+                            window.localStorage?.getItem(initFlagKey) === "true"
+
+                        if (hasBeenInitialized) {
+                            // 이미 초기화된 경우: API에서 받은 데이터를 그대로 사용 (빈 배열 포함)
+                            setItems(loaded)
+                        } else {
+                            // 최초 접속인 경우: DEFAULT_ITEMS를 로드하고 초기화 플래그 설정
+                            setItems(DEFAULT_ITEMS)
+                            if (typeof window !== "undefined" && window.localStorage) {
+                                try {
+                                    window.localStorage.setItem(initFlagKey, "true")
+                                } catch (e) {
+                                    // localStorage 실패 시 무시
+                                }
+                            }
+                        }
                     }
                 } else if (mounted) {
-                    setItems(DEFAULT_ITEMS)
+                    // API 실패 시에도 초기화 플래그 확인
+                    const initFlagKey = `info_section_initialized_${pageId}`
+                    const hasBeenInitialized = typeof window !== "undefined" &&
+                        window.localStorage?.getItem(initFlagKey) === "true"
+
+                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
+                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
+                        try {
+                            window.localStorage.setItem(initFlagKey, "true")
+                        } catch (e) {
+                            // localStorage 실패 시 무시
+                        }
+                    }
                 }
             } catch (_e) {
-                if (mounted) setItems(DEFAULT_ITEMS)
+                if (mounted) {
+                    // 에러 시에도 초기화 플래그 확인
+                    const initFlagKey = `info_section_initialized_${pageId}`
+                    const hasBeenInitialized = typeof window !== "undefined" &&
+                        window.localStorage?.getItem(initFlagKey) === "true"
+
+                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
+                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
+                        try {
+                            window.localStorage.setItem(initFlagKey, "true")
+                        } catch (e) {
+                            // localStorage 실패 시 무시
+                        }
+                    }
+                }
             } finally {
                 if (mounted) setLoading(false)
             }
@@ -17788,7 +17833,26 @@ function TransportTab({
                                 ),
                             })
                         )
-                        setItems(loaded.length > 0 ? loaded : DEFAULT_ITEMS)
+
+                        // localStorage에서 초기화 플래그 확인
+                        const initFlagKey = `transport_section_initialized_${pageId}`
+                        const hasBeenInitialized = typeof window !== "undefined" &&
+                            window.localStorage?.getItem(initFlagKey) === "true"
+
+                        if (hasBeenInitialized) {
+                            // 이미 초기화된 경우: API에서 받은 데이터를 그대로 사용 (빈 배열 포함)
+                            setItems(loaded)
+                        } else {
+                            // 최초 접속인 경우: DEFAULT_ITEMS를 로드하고 초기화 플래그 설정
+                            setItems(DEFAULT_ITEMS)
+                            if (typeof window !== "undefined" && window.localStorage) {
+                                try {
+                                    window.localStorage.setItem(initFlagKey, "true")
+                                } catch (e) {
+                                    // localStorage 실패 시 무시
+                                }
+                            }
+                        }
                     }
                     // locationName이 비어있으면 venue_name 값으로 보정
                     let fetchedLocationName =
@@ -17861,11 +17925,37 @@ function TransportTab({
                         }
                     }
                 } else if (mounted) {
-                    setItems(DEFAULT_ITEMS)
+                    // API 실패 시에도 초기화 플래그 확인
+                    const initFlagKey = `transport_section_initialized_${pageId}`
+                    const hasBeenInitialized = typeof window !== "undefined" &&
+                        window.localStorage?.getItem(initFlagKey) === "true"
+
+                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
+                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
+                        try {
+                            window.localStorage.setItem(initFlagKey, "true")
+                        } catch (e) {
+                            // localStorage 실패 시 무시
+                        }
+                    }
                 }
             } catch (error) {
                 console.warn("TransportTab 로드 실패:", error)
-                if (mounted) setItems(DEFAULT_ITEMS)
+                if (mounted) {
+                    // 에러 시에도 초기화 플래그 확인
+                    const initFlagKey = `transport_section_initialized_${pageId}`
+                    const hasBeenInitialized = typeof window !== "undefined" &&
+                        window.localStorage?.getItem(initFlagKey) === "true"
+
+                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
+                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
+                        try {
+                            window.localStorage.setItem(initFlagKey, "true")
+                        } catch (e) {
+                            // localStorage 실패 시 무시
+                        }
+                    }
+                }
             } finally {
                 if (mounted) setLoading(false)
             }
