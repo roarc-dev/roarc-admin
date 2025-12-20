@@ -1864,31 +1864,34 @@ function AdminFooter() {
         <div
             style={{
                 width: "100%",
-                height: "108px",
+                height: "140px",
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                paddingTop: 40,
-                paddingBottom: 30,
+                paddingTop: 0,
+                paddingBottom: 20,
+                marginBottom: 40,
                 gap: 10,
             }}
         >
             <div
                 style={{
-                    overflow: "hidden",
+                    overflow: "visible",
                     display: "inline-flex",
                     flexDirection: "column",
                     alignItems: "center",
                     opacity: 0.3,
                     gap: 10,
+                    width: "10%",
+                    height: "13px",
                 }}
             >
                 <div data-svg-wrapper>
                     <svg
                         xmlns="http://www.w3.org/2000/svg"
-                        width="29"
-                        height="7"
+                        width="100%"
+                        height="13"
                         viewBox="0 0 57 13"
                         fill="none"
                     >
