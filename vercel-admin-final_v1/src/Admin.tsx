@@ -1887,8 +1887,8 @@ function AdminFooter() {
                 <div data-svg-wrapper>
                     <svg
                         xmlns="http://www.w3.org/2000/svg"
-                        width="57"
-                        height="13"
+                        width="29"
+                        height="7"
                         viewBox="0 0 57 13"
                         fill="none"
                     >

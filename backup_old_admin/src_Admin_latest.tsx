@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
+import ReactDOM from "react-dom"
 import { motion, AnimatePresence } from "framer-motion"
 
 const FONT_STACKS = {
@@ -1890,6 +1891,7 @@ function AdminFooter() {
                         height="13"
                         viewBox="0 0 57 13"
                         fill="none"
+                        style={{ height: "auto", width: "100%" }}
                     >
                         <path
                             d="M20.0771 0.908438C19.2193 0.322116 18.1965 0.0300293 17.0106 0.0300293C15.4195 0.0300293 14.045 0.57984 12.8913 1.67731C11.7355 2.77693 11.1587 4.38556 11.1587 6.50534C11.1587 7.92067 11.4375 9.11909 11.995 10.0941C12.5525 11.0713 13.2709 11.7994 14.1479 12.2783C15.025 12.7573 15.9556 12.9957 16.9399 12.9957C17.9863 12.9957 18.947 12.7358 19.824 12.2118C20.7011 11.6899 21.398 10.9339 21.9126 9.9481C22.4273 8.9623 22.6846 7.80469 22.6846 6.47527C22.6846 5.3241 22.4637 4.25455 22.0241 3.26661C21.5824 2.28082 20.9327 1.49261 20.0749 0.908438H20.0771ZM19.5774 9.24795C19.4595 10.0898 19.1936 10.7943 18.7797 11.3634C18.3659 11.9326 17.7612 12.2182 16.9677 12.2182C15.7648 12.2182 14.9842 11.7028 14.6261 10.6719C14.268 9.64098 14.09 8.29007 14.09 6.61702C14.09 5.25967 14.1715 4.15576 14.3323 3.30312C14.4932 2.45263 14.7784 1.82121 15.1836 1.41315C15.5889 1.00723 16.1529 0.8032 16.8777 0.8032C18.012 0.8032 18.7754 1.26925 19.1679 2.2035C19.5603 3.13775 19.7576 4.52731 19.7576 6.37218C19.7576 7.44603 19.6975 8.40605 19.5817 9.2458L19.5774 9.24795Z"
@@ -4245,8 +4247,8 @@ const createInitialPageSettings = () => ({
     venue_name_kr: "",
     transport_location_name: "",
     venue_address: "",
-    venue_lat: null,
-    venue_lng: null,
+    venue_lat: null as number | null,
+    venue_lng: null as number | null,
     photo_section_image_url: "",
     photo_section_image_path: "",
     photo_section_location: "",
@@ -4327,8 +4329,45 @@ function AdminMainContent(props: any) {
     const [loginForm, setLoginForm] = useState({ username: "", password: "" })
     const [loginError, setLoginError] = useState("")
     const [isLoggingIn, setIsLoggingIn] = useState(false)
+    const [naverFlowState, setNaverFlowState] = useState<
+        "idle" | "checking" | "needs_code" | "ready"
+    >("idle")
+    const [redeemCode, setRedeemCode] = useState("")
+    const [naverSignupForm, setNaverSignupForm] = useState({
+        wedding_date: "",
+        last_groom_name_kr: "",
+        groom_name_kr: "",
+        last_groom_name_en: "",
+        groom_name_en: "",
+        last_bride_name_kr: "",
+        bride_name_kr: "",
+        last_bride_name_en: "",
+        bride_name_en: "",
+    })
     // 탭 상태 관리
     const [activeTab, setActiveTab] = useState<"basic" | "gallery">("basic")
+
+    // URL 동기화
+    // - 로그인 화면: /login
+    // - 코드 입력: /redeem
+    // - 메인(편집) 화면: /admin
+    //
+    // 주의: 이 프로젝트는 별도 라우터 없이 단일 엔트리에서 Admin이 렌더되므로,
+    //       화면 상태를 "진실의 원천"으로 두고 URL만 맞춥니다.
+    useEffect(() => {
+        if (typeof window === "undefined") return
+
+        const desiredPath = isAuthenticated
+            ? "/admin"
+            : naverFlowState === "needs_code"
+              ? "/redeem"
+              : "/login"
+
+        const currentPath = window.location.pathname || "/"
+        if (currentPath !== desiredPath) {
+            window.history.replaceState({}, "", desiredPath)
+        }
+    }, [isAuthenticated, naverFlowState])
 
     // 아코디언 상태 관리 (여러 섹션 동시 열림 가능)
     const [openSections, setOpenSections] = useState<Set<string>>(
@@ -5935,7 +5974,6 @@ function AdminMainContent(props: any) {
         setSelectedBgmId(null)
         setPlayingBgmId(null)
         setKakaoUploadLoading(false)
-        setLoginForm({ username: "", password: "" })
         setLoginError("")
     }
 
@@ -5971,72 +6009,204 @@ function AdminMainContent(props: any) {
                 } else {
                     localStorage.removeItem("admin_session")
                 }
+            } else {
+                // 네이버 OAuth 세션(쿠키) 확인 → (최초면) 코드 입력 → (완료면) 바로 편집 진입
+                ;(async () => {
+                    setNaverFlowState("checking")
+                    try {
+                        const meRes = await fetch("/api/me", {
+                            method: "GET",
+                            credentials: "include",
+                            headers: { Accept: "application/json" },
+                        })
+                        if (!meRes.ok) {
+                            setNaverFlowState("idle")
+                            return
+                        }
+                        const me = await meRes.json()
+                        if (!me?.authenticated) {
+                            setNaverFlowState("idle")
+                            return
+                        }
+
+                        const statusRes = await fetch("/api/naver/status", {
+                            method: "GET",
+                            credentials: "include",
+                            headers: { Accept: "application/json" },
+                        })
+                        if (!statusRes.ok) {
+                            setNaverFlowState("idle")
+                            return
+                        }
+                        const status = await statusRes.json()
+                        if (status?.state === "needs_code") {
+                            setNaverFlowState("needs_code")
+                            return
+                        }
+                        if (status?.state === "ready" && status?.proxy_token) {
+                            setNaverFlowState("ready")
+                            setAuthToken(String(status.proxy_token))
+                            propSetIsAuthenticated(true)
+                            setCurrentUser(status.user)
+
+                            const nextPageId =
+                                status?.page_id &&
+                                typeof status.page_id === "string" &&
+                                status.page_id.trim().length > 0
+                                    ? status.page_id
+                                    : null
+
+                            if (nextPageId) {
+                                setAssignedPageId(nextPageId)
+                                setCurrentPageId(nextPageId)
+                                try {
+                                    localStorage.setItem(
+                                        "assigned_page_id",
+                                        nextPageId
+                                    )
+                                } catch {
+                                    // ignore
+                                }
+                            }
+                            loadAllPages()
+                            loadContactList(nextPageId ?? undefined)
+                            loadPageSettings(nextPageId ?? undefined)
+                            return
+                        }
+
+                        setNaverFlowState("idle")
+                    } catch (error) {
+                        console.warn("네이버 세션 확인 실패:", error)
+                        setNaverFlowState("idle")
+                    }
+                })()
             }
         } catch (error) {
             console.warn("localStorage 접근 실패:", error)
         }
     }, [])
-    // 로그인/로그아웃
-    const handleLogin = async (e: React.FormEvent) => {
-        e.preventDefault()
+    // 네이버 로그인 시작
+    const handleNaverLogin = () => {
         setIsLoggingIn(true)
         setLoginError("")
+        if (typeof window !== "undefined") {
+            window.location.href = "/api/auth/naver"
+        }
+    }
 
-        const result = await authenticateAdmin(
-            loginForm.username,
-            loginForm.password
-        )
-        if (result.success) {
-            if (typeof window !== "undefined") {
-                try {
-                    localStorage.setItem(
-                        "admin_session",
-                        generateSessionToken(result.user)
-                    )
-                } catch (error) {
-                    console.warn("localStorage 저장 실패:", error)
+    // ID/PW 로그인 (기존 로그인 화면 복원)
+    const handleLogin = useCallback(
+        async (e: React.FormEvent) => {
+            e.preventDefault()
+            setIsLoggingIn(true)
+            setLoginError("")
+            try {
+                const result = await authenticateAdmin(
+                    loginForm.username,
+                    loginForm.password
+                )
+                if (!result.success) {
+                    setLoginError(result.error)
+                    return
                 }
+
+                resetAdminSessionState()
+                propSetIsAuthenticated(true)
+                setCurrentUser(result.user)
+
+                const assigned =
+                    result.user &&
+                    typeof result.user.page_id === "string" &&
+                    result.user.page_id.trim().length > 0
+                        ? result.user.page_id
+                        : null
+
+                if (assigned) {
+                    setAssignedPageId(assigned)
+                    setCurrentPageId(assigned)
+                    try {
+                        localStorage.setItem("assigned_page_id", assigned)
+                    } catch {
+                        // ignore
+                    }
+                }
+
+                setLoginForm({ username: "", password: "" })
+                loadAllPages()
+                loadContactList(assigned ?? undefined)
+                loadPageSettings(assigned ?? undefined)
+            } catch (error) {
+                console.warn("ID/PW 로그인 실패:", error)
+                setLoginError(
+                    "로그인에 실패했습니다. 카카오톡 채널 [로아크]로 문의해주세요."
+                )
+            } finally {
+                setIsLoggingIn(false)
             }
-            resetAdminSessionState()
-            propSetIsAuthenticated(true)
-            setCurrentUser(result.user)
-            // 로그인 사용자에 page_id가 할당되어 있으면 강제 적용 (비관리자용)
-            const assigned =
-                (result.user && (result.user as any).page_id) || null
-            const nextPageId =
-                assigned &&
-                typeof assigned === "string" &&
-                assigned.trim().length > 0
-                    ? assigned
-                    : null
-            if (nextPageId) {
-                setAssignedPageId(nextPageId)
-                setCurrentPageId(nextPageId)
-                if (typeof window !== "undefined") {
+        },
+        [loginForm.password, loginForm.username]
+    )
+
+    const handleRedeemCode = async () => {
+        setIsLoggingIn(true)
+        setLoginError("")
+        try {
+            const res = await fetch("/api/naver/redeem", {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    code: redeemCode,
+                    ...naverSignupForm,
+                }),
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) {
+                setLoginError(
+                    data?.error ||
+                        "코드 확인에 실패했습니다. 카카오톡 채널 [로아크]로 문의해주세요."
+                )
+                return
+            }
+            if (data?.state === "ready" && data?.proxy_token) {
+                setAuthToken(String(data.proxy_token))
+                propSetIsAuthenticated(true)
+                setCurrentUser(data.user)
+
+                const nextPageId =
+                    data?.page_id &&
+                    typeof data.page_id === "string" &&
+                    data.page_id.trim().length > 0
+                        ? data.page_id
+                        : null
+
+                if (nextPageId) {
+                    setAssignedPageId(nextPageId)
+                    setCurrentPageId(nextPageId)
                     try {
                         localStorage.setItem("assigned_page_id", nextPageId)
-                    } catch (error) {
-                        console.warn("localStorage 저장 실패:", error)
+                    } catch {
+                        // ignore
                     }
                 }
-            } else {
-                setAssignedPageId(null)
-                if (typeof window !== "undefined") {
-                    try {
-                        localStorage.removeItem("assigned_page_id")
-                    } catch (error) {
-                        console.warn("localStorage 삭제 실패:", error)
-                    }
-                }
+                loadAllPages()
+                loadContactList(nextPageId ?? undefined)
+                loadPageSettings(nextPageId ?? undefined)
+                setNaverFlowState("ready")
+                return
             }
-            setLoginForm({ username: "", password: "" })
-            loadAllPages()
-            loadContactList(nextPageId ?? undefined)
-            loadPageSettings(nextPageId ?? undefined)
-        } else {
-            setLoginError(result.error)
+            setLoginError(
+                data?.error ||
+                    "코드 확인에 실패했습니다. 카카오톡 채널 [로아크]로 문의해주세요."
+            )
+        } catch (error) {
+            console.warn("코드 입력 처리 실패:", error)
+            setLoginError(
+                "코드 확인에 실패했습니다. 카카오톡 채널 [로아크]로 문의해주세요."
+            )
+        } finally {
+            setIsLoggingIn(false)
         }
-        setIsLoggingIn(false)
     }
 
     const handleLogout = () => {
@@ -6044,6 +6214,12 @@ function AdminMainContent(props: any) {
         resetAdminSessionState()
         propSetIsAuthenticated(false)
         setCurrentUser(null)
+        // 네이버 OAuth 세션 쿠키도 제거
+        if (typeof window !== "undefined") {
+            fetch("/api/logout", { method: "POST", credentials: "include" }).catch(
+                () => {}
+            )
+        }
         if (typeof window !== "undefined") {
             try {
                 localStorage.removeItem("assigned_page_id")
@@ -7434,6 +7610,682 @@ function AdminMainContent(props: any) {
 
     // 로그인 화면
     if (!propIsAuthenticated) {
+        // 네이버 로그인 완료했지만 아직 코드 입력 전
+        if (naverFlowState === "needs_code") {
+            return (
+                <div
+                    style={{
+                        ...style,
+                        width: "100%",
+                        maxWidth: "430px",
+                        minWidth: "375px",
+                        height: "100%",
+                        minHeight:
+                            "calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom))",
+                        backgroundColor: "#ffffff",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        position: "relative",
+                        boxSizing: "border-box",
+                    }}
+                >
+                    <div style={{ height: "16px", width: "100%" }} />
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            padding: "48px 0",
+                            gap: "48px",
+                        }}
+                    >
+                        <img
+                            src={ROARC_LOGO_URL}
+                            alt="Roarc Logo"
+                            style={{
+                                width: "178px",
+                                height: "88px",
+                                objectFit: "contain",
+                            }}
+                        />
+                    </div>
+                    <div style={{ height: "16px", width: "100%" }} />
+
+                    <div
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            padding: "0 32px",
+                            width: "100%",
+                            gap: "24px",
+                        }}
+                    >
+                        {/* 필독 안내 (SignUp 일부 UI 재사용) */}
+                        <div
+                            style={{
+                                fontSize: "14px",
+                                color: "#aeaeae",
+                                lineHeight: "20px",
+                                marginBottom: "0px",
+                                fontFamily: FONT_STACKS.pretendardVariable,
+                                width: "100%",
+                            }}
+                        >
+                            <p
+                                style={{
+                                    margin: "0 0 4px 0",
+                                    fontWeight: 400,
+                                }}
+                            >
+                                ***중요
+                            </p>
+                            <p style={{ margin: 0 }}>
+                                아래 정보로 모바일 카드 링크와 내용이 생성됩니다.
+                                제출된 정보값은 수정 및 재제출이 불가하오니 정확하게
+                                입력해주세요.
+                            </p>
+                        </div>
+
+                        {/* 예식일자 */}
+                        <div style={{ marginBottom: "0px", width: "100%" }}>
+                            <label
+                                style={{
+                                    display: "block",
+                                    marginBottom: "12px",
+                                    fontSize: "14px",
+                                    fontWeight: "400",
+                                    color: "#000000",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
+                                }}
+                            >
+                                예식일자
+                            </label>
+                            <input
+                                type="date"
+                                value={naverSignupForm.wedding_date}
+                                onChange={(e) =>
+                                    setNaverSignupForm((prev) => ({
+                                        ...prev,
+                                        wedding_date: e.target.value,
+                                    }))
+                                }
+                                style={{
+                                    width: "100%",
+                                    padding: "16px",
+                                    border: "1px solid #e5e6e8",
+                                    borderRadius: "2px",
+                                    boxSizing: "border-box",
+                                    fontSize: "14px",
+                                    outline: "none",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
+                                    color: naverSignupForm.wedding_date
+                                        ? "#000000"
+                                        : "#aeaeae",
+                                }}
+                                required
+                            />
+                        </div>
+
+                        {/* 성함 입력 (Admin.tsx 필드 디자인 재사용) */}
+                        <div style={{ width: "100%" }}>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "12px",
+                                    marginBottom: "12px",
+                                }}
+                            >
+                                <label
+                                    style={{
+                                        fontSize: "14px",
+                                        color: "#000000",
+                                        fontFamily: FONT_STACKS.pretendardVariable,
+                                        lineHeight: "20px",
+                                    }}
+                                >
+                                    신랑 한글 성함
+                                </label>
+                            </div>
+                            <div
+                                style={{
+                                    width: "calc(100% * 1.1429)",
+                                    transform: "scale(0.875)",
+                                    transformOrigin: "left center",
+                                    display: "flex",
+                                    gap: 6,
+                                    marginBottom: 12,
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: "30%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.last_groom_name_kr}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                last_groom_name_kr: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="박"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.last_groom_name_kr
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                                <div
+                                    style={{
+                                        width: "70%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.groom_name_kr}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                groom_name_kr: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="민준"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.groom_name_kr
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "12px",
+                                    marginBottom: "12px",
+                                }}
+                            >
+                                <label
+                                    style={{
+                                        fontSize: "14px",
+                                        color: "#000000",
+                                        fontFamily: FONT_STACKS.pretendardVariable,
+                                        lineHeight: "20px",
+                                    }}
+                                >
+                                    신랑 영문 성함
+                                </label>
+                            </div>
+                            <div
+                                style={{
+                                    width: "calc(100% * 1.1429)",
+                                    transform: "scale(0.875)",
+                                    transformOrigin: "left center",
+                                    display: "flex",
+                                    gap: 6,
+                                    marginBottom: 12,
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: "30%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.last_groom_name_en}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                last_groom_name_en: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="PARK"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.last_groom_name_en
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                                <div
+                                    style={{
+                                        width: "70%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.groom_name_en}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                groom_name_en: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="MIN JUN"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.groom_name_en
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "12px",
+                                    marginBottom: "12px",
+                                }}
+                            >
+                                <label
+                                    style={{
+                                        fontSize: "14px",
+                                        color: "#000000",
+                                        fontFamily: FONT_STACKS.pretendardVariable,
+                                        lineHeight: "20px",
+                                    }}
+                                >
+                                    신부 한글 성함
+                                </label>
+                            </div>
+                            <div
+                                style={{
+                                    width: "calc(100% * 1.1429)",
+                                    transform: "scale(0.875)",
+                                    transformOrigin: "left center",
+                                    display: "flex",
+                                    gap: 6,
+                                    marginBottom: 12,
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: "30%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.last_bride_name_kr}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                last_bride_name_kr: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="최"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.last_bride_name_kr
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                                <div
+                                    style={{
+                                        width: "70%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.bride_name_kr}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                bride_name_kr: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="서윤"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.bride_name_kr
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "12px",
+                                    marginBottom: "12px",
+                                }}
+                            >
+                                <label
+                                    style={{
+                                        fontSize: "14px",
+                                        color: "#000000",
+                                        fontFamily: FONT_STACKS.pretendardVariable,
+                                        lineHeight: "20px",
+                                    }}
+                                >
+                                    신부 영문 성함
+                                </label>
+                            </div>
+                            <div
+                                style={{
+                                    width: "calc(100% * 1.1429)",
+                                    transform: "scale(0.875)",
+                                    transformOrigin: "left center",
+                                    display: "flex",
+                                    gap: 6,
+                                    marginBottom: 0,
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: "30%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.last_bride_name_en}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                last_bride_name_en: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="CHOI"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.last_bride_name_en
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                                <div
+                                    style={{
+                                        width: "70%",
+                                        height: "calc(40px*1.1429)",
+                                        padding: 12,
+                                        background: "white",
+                                        border: `1px solid ${theme.color.border}`,
+                                        borderRadius: 2,
+                                        display: "flex",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <input
+                                        type="text"
+                                        value={naverSignupForm.bride_name_en}
+                                        onChange={(e) =>
+                                            setNaverSignupForm((prev) => ({
+                                                ...prev,
+                                                bride_name_en: (
+                                                    e.target as HTMLInputElement
+                                                ).value,
+                                            }))
+                                        }
+                                        placeholder="SEO YUN"
+                                        style={{
+                                            width: "100%",
+                                            border: "none",
+                                            outline: "none",
+                                            borderRadius: 2,
+                                            fontSize: 16,
+                                            fontFamily: FONT_STACKS.pretendardVariable,
+                                            color: naverSignupForm.bride_name_en
+                                                ? "black"
+                                                : "#ADADAD",
+                                        }}
+                                        required
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ width: "100%" }}>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "12px",
+                                    marginBottom: "12px",
+                                }}
+                            >
+                                <label
+                                    style={{
+                                        fontSize: "14px",
+                                        color: "#000000",
+                                        fontFamily: FONT_STACKS.pretendardVariable,
+                                        lineHeight: "20px",
+                                    }}
+                                >
+                                    코드 입력
+                                </label>
+                                <div
+                                    style={{
+                                        fontSize: "14px",
+                                        color: "#aeaeae",
+                                        fontFamily: FONT_STACKS.pretendardVariable,
+                                        lineHeight: "20px",
+                                    }}
+                                >
+                                    구매 후 발급받은 코드를 입력해주세요.
+                                </div>
+                            </div>
+                            <input
+                                type="text"
+                                value={redeemCode}
+                                onChange={(e) => setRedeemCode(e.target.value)}
+                                style={{
+                                    width: "100%",
+                                    height: "49px",
+                                    padding: "0 16px",
+                                    border: "1px solid #e5e6e8",
+                                    borderRadius: "2px",
+                                    boxSizing: "border-box",
+                                    fontSize: "16px",
+                                    backgroundColor: "white",
+                                    color: "#000000",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
+                                }}
+                                required
+                            />
+                        </div>
+
+                        <button
+                            type="button"
+                            aria-label="코드 입력"
+                            disabled={isLoggingIn}
+                            onClick={handleRedeemCode}
+                            style={{
+                                width: "100%",
+                                height: 56,
+                                border: "none",
+                                padding: 0,
+                                background: "transparent",
+                                cursor: isLoggingIn ? "not-allowed" : "pointer",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    width: "100%",
+                                    height: "100%",
+                                    position: "relative",
+                                    background: "#000",
+                                    borderRadius: 2,
+                                    opacity: isLoggingIn ? 0.7 : 1,
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        position: "absolute",
+                                        left: 0,
+                                        top: 0,
+                                        right: 0,
+                                        bottom: 0,
+                                        display: "flex",
+                                        justifyContent: "center",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            textAlign: "center",
+                                            color: "white",
+                                            fontSize: 14,
+                                            fontFamily:
+                                                FONT_STACKS.pretendardVariable,
+                                            fontWeight: "600",
+                                            lineHeight: "24px",
+                                            wordWrap: "break-word",
+                                        }}
+                                    >
+                                        {isLoggingIn ? "확인 중..." : "코드 입력"}
+                                    </div>
+                                </div>
+                            </div>
+                        </button>
+
+                        {loginError && (
+                            <div
+                                style={{
+                                    padding: "12px 16px",
+                                    backgroundColor: "#f5f5f5",
+                                    color: "#666666",
+                                    fontSize: "14px",
+                                    textAlign: "center",
+                                    borderRadius: "2px",
+                                    width: "100%",
+                                }}
+                            >
+                                {loginError}
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ height: "16px", width: "100%" }} />
+                </div>
+            )
+        }
+
         return (
             <div
                 style={{
@@ -7491,44 +8343,25 @@ function AdminMainContent(props: any) {
                         gap: "24px",
                     }}
                 >
+                    {/* ID/PW 로그인 (복원) */}
                     <form onSubmit={handleLogin} style={{ width: "100%" }}>
-                        {/* 아이디 입력 */}
                         <div style={{ marginBottom: "24px" }}>
-                            <div
+                            <label
                                 style={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: "12px",
+                                    display: "block",
+                                    fontSize: "14px",
+                                    color: "#000000",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
+                                    lineHeight: "normal",
                                     marginBottom: "12px",
                                 }}
                             >
-                                <label
-                                    style={{
-                                        fontSize: "14px",
-                                        color: "#000000",
-                                        fontFamily: "Pretendard, sans-serif",
-                                        lineHeight: "20px",
-                                    }}
-                                >
-                                    아이디
-                                </label>
-                                <div
-                                    style={{
-                                        fontSize: "14px",
-                                        color: "#aeaeae",
-                                        fontFamily: "Pretendard, sans-serif",
-                                        lineHeight: "20px",
-                                    }}
-                                >
-                                    네이버 스마트스토어 구매자 ID
-                                </div>
-                            </div>
+                                아이디
+                            </label>
                             <input
                                 type="text"
                                 value={loginForm.username}
-                                onChange={(
-                                    e: React.ChangeEvent<HTMLInputElement>
-                                ) =>
+                                onChange={(e) =>
                                     setLoginForm((prev) => ({
                                         ...prev,
                                         username: e.target.value,
@@ -7544,20 +8377,19 @@ function AdminMainContent(props: any) {
                                     fontSize: "16px",
                                     backgroundColor: "white",
                                     color: "#000000",
-                                    fontFamily: "Pretendard, sans-serif",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
                                 }}
                                 required
                             />
                         </div>
 
-                        {/* 비밀번호 입력 */}
                         <div style={{ marginBottom: "24px" }}>
                             <label
                                 style={{
                                     display: "block",
                                     fontSize: "14px",
                                     color: "#000000",
-                                    fontFamily: "Pretendard, sans-serif",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
                                     lineHeight: "normal",
                                     marginBottom: "12px",
                                 }}
@@ -7583,7 +8415,7 @@ function AdminMainContent(props: any) {
                                     fontSize: "16px",
                                     backgroundColor: "white",
                                     color: "#000000",
-                                    fontFamily: "Pretendard, sans-serif",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
                                     marginBottom: "12px",
                                 }}
                                 required
@@ -7592,7 +8424,7 @@ function AdminMainContent(props: any) {
                                 style={{
                                     fontSize: "14px",
                                     color: "#aeaeae",
-                                    fontFamily: "Pretendard, sans-serif",
+                                    fontFamily: FONT_STACKS.pretendardVariable,
                                     lineHeight: "20px",
                                     margin: 0,
                                 }}
@@ -7602,26 +8434,9 @@ function AdminMainContent(props: any) {
                             </p>
                         </div>
 
-                        {/* 에러 메시지 */}
-                        {loginError && (
-                            <div
-                                style={{
-                                    padding: "12px 16px",
-                                    backgroundColor: "#f5f5f5",
-                                    color: "#666666",
-                                    fontSize: "14px",
-                                    marginBottom: "20px",
-                                    textAlign: "center",
-                                    borderRadius: "2px",
-                                }}
-                            >
-                                {loginError}
-                            </div>
-                        )}
-
-                        {/* 로그인 버튼 */}
                         <button
                             type="submit"
+                            aria-label="로그인"
                             disabled={isLoggingIn}
                             style={{
                                 width: "100%",
@@ -7631,19 +8446,146 @@ function AdminMainContent(props: any) {
                                 border: "none",
                                 borderRadius: "0",
                                 fontSize: "14px",
-                                fontFamily: "Pretendard, sans-serif",
+                                fontFamily: FONT_STACKS.pretendardVariable,
                                 fontWeight: 600,
-                                cursor: "pointer",
+                                cursor: isLoggingIn ? "not-allowed" : "pointer",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                gap: "10px",
                                 padding: "12px",
+                                opacity: isLoggingIn ? 0.7 : 1,
                             }}
                         >
                             {isLoggingIn ? "로그인 중..." : "로그인"}
                         </button>
                     </form>
+
+                    {/* 또는 */}
+                    <div
+                        style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 12,
+                        }}
+                    >
+                        <div
+                            style={{
+                                flex: 1,
+                                height: 1,
+                                backgroundColor: theme.color.border,
+                            }}
+                        />
+                        <div
+                            style={{
+                                fontSize: 12,
+                                color: "#aeaeae",
+                                fontFamily: FONT_STACKS.pretendardVariable,
+                                lineHeight: "16px",
+                            }}
+                        >
+                            또는
+                        </div>
+                        <div
+                            style={{
+                                flex: 1,
+                                height: 1,
+                                backgroundColor: theme.color.border,
+                            }}
+                        />
+                    </div>
+
+                    <button
+                        type="button"
+                        aria-label="네이버 로그인"
+                        disabled={isLoggingIn}
+                        onClick={handleNaverLogin}
+                        style={{
+                            width: "100%",
+                            height: 56,
+                            border: "none",
+                            padding: 0,
+                            background: "transparent",
+                            cursor: isLoggingIn ? "not-allowed" : "pointer",
+                        }}
+                    >
+                        <div
+                            style={{
+                                width: "100%",
+                                height: "100%",
+                                background: "#03A94D",
+                                borderRadius: 2,
+                                opacity: isLoggingIn ? 0.7 : 1,
+                                paddingLeft: 66,
+                                paddingRight: 66,
+                                paddingTop: 16,
+                                paddingBottom: 16,
+                                display: "flex",
+                                flexDirection: "column",
+                                justifyContent: "center",
+                                alignItems: "center",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    overflow: "hidden",
+                                    display: "inline-flex",
+                                    justifyContent: "center",
+                                    alignItems: "center",
+                                    gap: 8,
+                                }}
+                            >
+                                {/* N 아이콘 (흰색 배경 없음) */}
+                                <svg
+                                    width="18"
+                                    height="18"
+                                    viewBox="0 0 20 20"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    aria-hidden="true"
+                                    focusable="false"
+                                    style={{ display: "block" }}
+                                >
+                                    <path
+                                        fillRule="evenodd"
+                                        clipRule="evenodd"
+                                        d="M13.5605 10.7061L6.14573 0H0V20H6.43946V9.29768L13.8543 20H20V0H13.5605V10.7061Z"
+                                        fill="white"
+                                    />
+                                </svg>
+                                <div
+                                    style={{
+                                        textAlign: "center",
+                                        color: "white",
+                                        fontSize: 14,
+                                        fontFamily:
+                                            FONT_STACKS.pretendardVariable,
+                                        fontWeight: "600",
+                                        lineHeight: "24px",
+                                        wordWrap: "break-word",
+                                    }}
+                                >
+                                    {isLoggingIn ? "로그인 중..." : "네이버 로그인"}
+                                </div>
+                            </div>
+                        </div>
+                    </button>
+
+                    {loginError && (
+                        <div
+                            style={{
+                                padding: "12px 16px",
+                                backgroundColor: "#f5f5f5",
+                                color: "#666666",
+                                fontSize: "14px",
+                                textAlign: "center",
+                                borderRadius: "2px",
+                                width: "100%",
+                            }}
+                        >
+                            {loginError}
+                        </div>
+                    )}
                 </div>
 
                 {/* 하단 간격 */}
