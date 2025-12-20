@@ -4346,6 +4346,28 @@ function AdminMainContent(props: any) {
     // 탭 상태 관리
     const [activeTab, setActiveTab] = useState<"basic" | "gallery">("basic")
 
+    // URL 동기화
+    // - 로그인 화면: /login
+    // - 코드 입력: /redeem
+    // - 메인(편집) 화면: /admin
+    //
+    // 주의: 이 프로젝트는 별도 라우터 없이 단일 엔트리에서 Admin이 렌더되므로,
+    //       화면 상태를 "진실의 원천"으로 두고 URL만 맞춥니다.
+    useEffect(() => {
+        if (typeof window === "undefined") return
+
+        const desiredPath = isAuthenticated
+            ? "/admin"
+            : naverFlowState === "needs_code"
+              ? "/redeem"
+              : "/login"
+
+        const currentPath = window.location.pathname || "/"
+        if (currentPath !== desiredPath) {
+            window.history.replaceState({}, "", desiredPath)
+        }
+    }, [isAuthenticated, naverFlowState])
+
     // 아코디언 상태 관리 (여러 섹션 동시 열림 가능)
     const [openSections, setOpenSections] = useState<Set<string>>(
         new Set(["name"])
