@@ -16378,36 +16378,6 @@ function InfoTab({
     ]
 
     const EMPTY_SENTINEL = "__ROARC_EMPTY__"
-    const cacheKey = React.useMemo(
-        () => `roarc_admin_cache_${pageId}_info`,
-        [pageId]
-    )
-
-    // 안내 사항 기본 데이터는 "최초로 섹션을 오픈했을 때"만 주입합니다.
-    // 이후에는 서버 값(없으면 빈 값)을 그대로 보여주며, 절대 DEFAULT로 덮어쓰지 않습니다.
-    const allowDefaultOnEmpty = React.useMemo(() => {
-        if (typeof window === "undefined") return true
-        if (!pageId) return true
-        const key = `roarc_admin_init_${pageId}_info`
-        try {
-            return !window.localStorage.getItem(key)
-        } catch {
-            return true
-        }
-    }, [pageId])
-
-    React.useEffect(() => {
-        if (typeof window === "undefined") return
-        if (!pageId) return
-        const key = `roarc_admin_init_${pageId}_info`
-        try {
-            if (!window.localStorage.getItem(key)) {
-                window.localStorage.setItem(key, "1")
-            }
-        } catch {
-            // ignore
-        }
-    }, [pageId])
 
     const isEmptySentinel = React.useCallback(
         (it: InfoItem) =>
@@ -16415,29 +16385,9 @@ function InfoTab({
         []
     )
 
-    const [items, setItems] = React.useState<InfoItem[]>(() => {
-        if (typeof window === "undefined") return []
-        if (!pageId) return []
-        try {
-            const raw = window.localStorage.getItem(cacheKey)
-            if (!raw) return []
-            const parsed = JSON.parse(raw) as unknown
-            if (!Array.isArray(parsed)) return []
-            // 최소 형태 검증
-            return parsed
-                .map((it: any, idx: number) => ({
-                    id: typeof it?.id === "string" ? it.id : undefined,
-                    title: String(it?.title ?? ""),
-                    description: String(it?.description ?? ""),
-                    display_order: Number(it?.display_order ?? idx + 1),
-                    image: typeof it?.image === "string" ? it.image : "",
-                }))
-                .filter((it) => !isEmptySentinel(it))
-                .sort((a, b) => a.display_order - b.display_order)
-        } catch {
-            return []
-        }
-    })
+    // 섹션 오픈 시 항상 Supabase에 저장된 값을 불러옵니다.
+    // DEFAULT_ITEMS는 오직 "템플릿 불러오기" 버튼으로만 추가됩니다(자동 주입 금지).
+    const [items, setItems] = React.useState<InfoItem[]>([])
 
     const extractItemsArray = React.useCallback((result: any): any[] | null => {
         const candidates: unknown[] = [
@@ -16485,6 +16435,19 @@ function InfoTab({
                 display_order: prev.length + 1,
             },
         ])
+    }
+
+    // 템플릿 불러오기: DEFAULT_ITEMS를 기존 항목 뒤에 "추가"합니다(덮어쓰기 금지).
+    const addTemplateItems = () => {
+        setItems((prev) => {
+            const baseOrder = prev.length
+            const additions: InfoItem[] = DEFAULT_ITEMS.map((it, idx) => ({
+                ...it,
+                display_order: baseOrder + idx + 1,
+            }))
+            const next = [...prev, ...additions]
+            return next.map((it, i) => ({ ...it, display_order: i + 1 }))
+        })
     }
 
     const move = (index: number, dir: -1 | 1) => {
@@ -16736,68 +16699,27 @@ function InfoTab({
         setSaving(true)
         try {
             const token = tokenGetter?.() || ""
-            const getApiBases = () => {
-                const bases: string[] = []
-                try {
-                    if (
-                        typeof window !== "undefined" &&
-                        window.location?.origin
-                    ) {
-                        bases.push(window.location.origin)
-                    }
-                } catch {}
-                bases.push(PROXY_BASE_URL)
-                return Array.from(new Set(bases.filter(Boolean)))
-            }
-            const bases = getApiBases()
-            let res: Response | null = null
-            let text = ""
-            // 모든 항목을 삭제하고 저장한 경우:
-            // 다음 오픈 시 "저장된 값이 없다"로 오판해 DEFAULT를 주입하지 않도록
-            // sentinel 1개를 저장해 '사용하지 않음/빈 상태'를 명시합니다.
-            const payloadItems =
-                items.length === 0
-                    ? [
-                          {
-                              title: EMPTY_SENTINEL,
-                              description: EMPTY_SENTINEL,
-                              display_order: 1,
-                              image: "",
-                          },
-                      ]
-                    : items.map((it) => ({
-                          id: it.id,
-                          title: it.title,
-                          description: it.description,
-                          display_order: it.display_order,
-                          image: it.image || "",
-                      }))
-            for (const base of bases) {
-                try {
-                    const tryRes = await fetch(
-                        `${base}/api/page-settings?info`,
-                        {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                ...(token
-                                    ? { Authorization: `Bearer ${token}` }
-                                    : {}),
-                            },
-                            body: JSON.stringify({
-                                pageId,
-                                items: payloadItems,
-                            }),
-                        }
-                    )
-                    res = tryRes
-                    text = await tryRes.text()
-                    if (tryRes.ok) break
-                } catch (e) {
-                    // continue to next base
-                }
-            }
-            if (!res) throw new Error("network error")
+            // 빈 배열은 빈 배열 그대로 저장합니다. (센티넬 저장 금지)
+            const payloadItems = items.map((it) => ({
+                id: it.id,
+                title: it.title,
+                description: it.description,
+                display_order: it.display_order,
+                image: it.image || "",
+            }))
+            // Info/Transport는 proxy API가 정답이므로 origin API로 fallthrough 하지 않습니다.
+            const res = await fetch(`${PROXY_BASE_URL}/api/page-settings?info`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                    pageId,
+                    items: payloadItems,
+                }),
+            })
+            const text = await res.text()
             let result: any = {}
             try {
                 result = JSON.parse(text)
@@ -16810,22 +16732,6 @@ function InfoTab({
                 )
             }
             console.log("안내 사항이 저장되었습니다.")
-
-            // 로컬 캐시 업데이트 (닫았다 열어도 즉시 복원되도록)
-            if (typeof window !== "undefined") {
-                try {
-                    if (items.length === 0) {
-                        window.localStorage.removeItem(cacheKey)
-                    } else {
-                        window.localStorage.setItem(
-                            cacheKey,
-                            JSON.stringify(items)
-                        )
-                    }
-                } catch {
-                    // ignore
-                }
-            }
         } catch (e: any) {
             console.error(e?.message || "저장 중 오류가 발생했습니다")
         } finally {
@@ -16835,40 +16741,23 @@ function InfoTab({
 
     React.useEffect(() => {
         let mounted = true
-        const getApiBases = () => {
-            const bases: string[] = []
-            try {
-                if (typeof window !== "undefined" && window.location?.origin) {
-                    bases.push(window.location.origin)
-                }
-            } catch {
-                // window.location 접근 실패 시 무시
-            }
-            bases.push(PROXY_BASE_URL)
-            return Array.from(new Set(bases.filter(Boolean)))
-        }
+        // Info/Transport는 proxy API가 정답이므로 origin API로 fallthrough 하지 않습니다.
         const request = async (path: string, init?: RequestInit) => {
-            const bases = getApiBases()
-            let lastRes: Response | null = null
-            let lastErr: any = null
-            for (const base of bases) {
-                try {
-                    const res = await fetch(`${base}${path}`, init)
-                    if (res.ok) return res
-                    lastRes = res
-                } catch (e) {
-                    lastErr = e
-                }
-            }
-            if (lastRes) return lastRes
-            throw lastErr || new Error("Network error")
+            const res = await fetch(`${PROXY_BASE_URL}${path}`, init)
+            return res
         }
         async function load() {
             if (!pageId) return
             setLoading(true)
             try {
+                const token = tokenGetter?.() || ""
                 const res = await request(
-                    `/api/page-settings?info&pageId=${encodeURIComponent(pageId)}`
+                    `/api/page-settings?info&pageId=${encodeURIComponent(pageId)}`,
+                    {
+                        headers: {
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        },
+                    }
                 )
                 if (!res.ok) throw new Error(`load failed: ${res.status}`)
                 const result = await res.json()
@@ -16893,37 +16782,20 @@ function InfoTab({
                             .filter((it) => !isEmptySentinel(it))
                             .sort((a, b) => a.display_order - b.display_order)
 
+                        // 기존에 잘못 저장된 센티넬 row는 화면에서 숨깁니다(저장 시 자동 정리됨).
                         if (loaded.some(isEmptySentinel)) {
-                            // 사용자가 전체 삭제 후 저장한 상태(빈 상태 유지)
                             setItems([])
-                            if (typeof window !== "undefined") {
-                                try {
-                                    window.localStorage.removeItem(cacheKey)
-                                } catch {
-                                    // ignore
-                                }
-                            }
                             return
                         }
 
                         if (withoutSentinel.length > 0) {
                             // 저장된 rows가 있으면(비어있는 문자열이어도) 절대 덮어쓰지 않고 그대로 표시
                             setItems(withoutSentinel)
-                            if (typeof window !== "undefined") {
-                                try {
-                                    window.localStorage.setItem(
-                                        cacheKey,
-                                        JSON.stringify(withoutSentinel)
-                                    )
-                                } catch {
-                                    // ignore
-                                }
-                            }
                             return
                         }
 
-                        // 저장된 항목이 정말 없는 경우에만(= 빈 배열) 최초 1회만 기본값 주입
-                        setItems(allowDefaultOnEmpty ? DEFAULT_ITEMS : [])
+                        // 저장된 항목이 없는 경우: 빈 값 유지 (DEFAULT 자동 주입 금지)
+                        setItems([])
                         return
                     }
                 }
@@ -16998,8 +16870,21 @@ function InfoTab({
                             height: 40,
                             borderRadius: "2px",
                         }}
+                        aria-label="안내 항목 추가"
                     >
                         + 안내 추가
+                    </ButtonBase>
+                    <ButtonBase
+                        onClick={addTemplateItems}
+                        style={{
+                            width: "100%",
+                            height: 40,
+                            borderRadius: "2px",
+                            marginTop: 8,
+                        }}
+                        aria-label="안내 템플릿 불러오기"
+                    >
+                        + 템플릿 불러오기
                     </ButtonBase>
                 </div>
             )}
@@ -17076,36 +16961,6 @@ function TransportTab({
     ]
 
     const EMPTY_SENTINEL = "__ROARC_EMPTY__"
-    const cacheKey = React.useMemo(
-        () => `roarc_admin_cache_${pageId}_transport`,
-        [pageId]
-    )
-
-    // 교통 안내 기본 데이터는 "최초로 섹션을 오픈했을 때"만 주입합니다.
-    // 이후에는 서버 값(없으면 빈 값)을 그대로 보여주며, 절대 DEFAULT로 덮어쓰지 않습니다.
-    const allowDefaultOnEmpty = React.useMemo(() => {
-        if (typeof window === "undefined") return true
-        if (!pageId) return true
-        const key = `roarc_admin_init_${pageId}_transport`
-        try {
-            return !window.localStorage.getItem(key)
-        } catch {
-            return true
-        }
-    }, [pageId])
-
-    React.useEffect(() => {
-        if (typeof window === "undefined") return
-        if (!pageId) return
-        const key = `roarc_admin_init_${pageId}_transport`
-        try {
-            if (!window.localStorage.getItem(key)) {
-                window.localStorage.setItem(key, "1")
-            }
-        } catch {
-            // ignore
-        }
-    }, [pageId])
 
     const isEmptySentinel = React.useCallback(
         (it: TransportItem) =>
@@ -17113,27 +16968,9 @@ function TransportTab({
         []
     )
 
-    const [items, setItems] = React.useState<TransportItem[]>(() => {
-        if (typeof window === "undefined") return []
-        if (!pageId) return []
-        try {
-            const raw = window.localStorage.getItem(cacheKey)
-            if (!raw) return []
-            const parsed = JSON.parse(raw) as unknown
-            if (!Array.isArray(parsed)) return []
-            return parsed
-                .map((it: any, idx: number) => ({
-                    id: typeof it?.id === "string" ? it.id : undefined,
-                    title: String(it?.title ?? ""),
-                    description: String(it?.description ?? ""),
-                    display_order: Number(it?.display_order ?? idx + 1),
-                }))
-                .filter((it) => !isEmptySentinel(it))
-                .sort((a, b) => a.display_order - b.display_order)
-        } catch {
-            return []
-        }
-    })
+    // 섹션 오픈 시 항상 Supabase에 저장된 값을 불러옵니다.
+    // DEFAULT_ITEMS는 오직 "템플릿 불러오기" 버튼으로만 추가됩니다(자동 주입 금지).
+    const [items, setItems] = React.useState<TransportItem[]>([])
 
     const extractItemsArray = React.useCallback((result: any): any[] | null => {
         const candidates: unknown[] = [
@@ -17970,40 +17807,23 @@ function TransportTab({
 
     React.useEffect(() => {
         let mounted = true
-        const getApiBases = () => {
-            const bases: string[] = []
-            try {
-                if (typeof window !== "undefined" && window.location?.origin) {
-                    bases.push(window.location.origin)
-                }
-            } catch {
-                // window.location 접근 실패 시 무시
-            }
-            bases.push(PROXY_BASE_URL)
-            return Array.from(new Set(bases.filter(Boolean)))
-        }
+        // Info/Transport는 proxy API가 정답이므로 origin API로 fallthrough 하지 않습니다.
         const request = async (path: string, init?: RequestInit) => {
-            const bases = getApiBases()
-            let lastRes: Response | null = null
-            let lastErr: any = null
-            for (const base of bases) {
-                try {
-                    const res = await fetch(`${base}${path}`, init)
-                    if (res.ok) return res
-                    lastRes = res
-                } catch (e) {
-                    lastErr = e
-                }
-            }
-            if (lastRes) return lastRes
-            throw lastErr || new Error("Network error")
+            const res = await fetch(`${PROXY_BASE_URL}${path}`, init)
+            return res
         }
         async function load() {
             if (!pageId) return
             setLoading(true)
             try {
+                const token = tokenGetter?.() || ""
                 const res = await request(
-                    `/api/page-settings?transport&pageId=${encodeURIComponent(pageId)}`
+                    `/api/page-settings?transport&pageId=${encodeURIComponent(pageId)}`,
+                    {
+                        headers: {
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        },
+                    }
                 )
                 if (!res.ok) throw new Error(`load failed: ${res.status}`)
                 const result = await res.json()
@@ -18027,29 +17847,12 @@ function TransportTab({
                         if (withoutSentinel.length > 0) {
                             // 저장된 rows가 있으면(비어있는 문자열이어도) 절대 덮어쓰지 않고 그대로 표시
                             setItems(withoutSentinel)
-                            if (typeof window !== "undefined") {
-                                try {
-                                    window.localStorage.setItem(
-                                        cacheKey,
-                                        JSON.stringify(withoutSentinel)
-                                    )
-                                } catch {
-                                    // ignore
-                                }
-                            }
                         } else if (loaded.some(isEmptySentinel)) {
                             // 사용자가 전체 삭제 후 저장한 상태(빈 상태 유지)
                             setItems([])
-                            if (typeof window !== "undefined") {
-                                try {
-                                    window.localStorage.removeItem(cacheKey)
-                                } catch {
-                                    // ignore
-                                }
-                            }
                         } else {
-                            // 저장된 항목이 정말 없는 경우에만(= 빈 배열) 최초 1회만 기본값 주입
-                            setItems(allowDefaultOnEmpty ? DEFAULT_ITEMS : [])
+                            // 저장된 항목이 없는 경우: 빈 값 유지 (DEFAULT 자동 주입 금지)
+                            setItems([])
                         }
                     }
                     // locationName이 비어있으면 venue_name 값으로 보정
@@ -18124,15 +17927,8 @@ function TransportTab({
                     }
                     if (mounted && !Array.isArray(rawItems)) {
                         // data shape이 기대와 달라도(예: data.items 형태) 위에서 최대한 파싱합니다.
-                        // 여기까지 왔다면 items를 얻지 못한 것이므로, 기본값으로 덮어쓰지 않습니다.
-                        // 단, 최초 오픈이고 아직 아무 것도 없을 때만 기본값을 주입합니다.
-                        setItems((prev) =>
-                            prev.length > 0
-                                ? prev
-                                : allowDefaultOnEmpty
-                                  ? DEFAULT_ITEMS
-                                  : []
-                        )
+                        // 여기까지 왔다면 items를 얻지 못한 것이므로 상태를 변경하지 않습니다.
+                        // (DEFAULT 자동 주입 금지)
                     }
                 }
             } catch (error) {
@@ -18158,6 +17954,19 @@ function TransportTab({
                 display_order: prev.length + 1,
             },
         ])
+    }
+
+    // 템플릿 불러오기: DEFAULT_ITEMS를 기존 항목 뒤에 "추가"합니다(덮어쓰기 금지).
+    const addTemplateItems = () => {
+        setItems((prev) => {
+            const baseOrder = prev.length
+            const additions: TransportItem[] = DEFAULT_ITEMS.map((it, idx) => ({
+                ...it,
+                display_order: baseOrder + idx + 1,
+            }))
+            const next = [...prev, ...additions]
+            return next.map((it, i) => ({ ...it, display_order: i + 1 }))
+        })
     }
 
     const move = (index: number, dir: -1 | 1) => {
@@ -18247,70 +18056,27 @@ function TransportTab({
         try {
             broadcastAutoSaveToast()
             const token = tokenGetter?.() || ""
-            const getApiBases = () => {
-                const bases: string[] = []
-                try {
-                    if (
-                        typeof window !== "undefined" &&
-                        window.location?.origin
-                    ) {
-                        bases.push(window.location.origin)
-                    }
-                } catch {}
-                bases.push(PROXY_BASE_URL)
-                return Array.from(new Set(bases.filter(Boolean)))
-            }
-            const bases = getApiBases()
-            let res: Response | null = null
-            let text = ""
-            // 모든 항목을 삭제하고 저장한 경우:
-            // 다음 오픈 시 "저장된 값이 없다"로 오판해 DEFAULT를 주입하지 않도록
-            // sentinel 1개를 저장해 '사용하지 않음/빈 상태'를 명시합니다.
-            const payloadItems =
-                items.length === 0
-                    ? [
-                          {
-                              title: EMPTY_SENTINEL,
-                              description: EMPTY_SENTINEL,
-                              display_order: 1,
-                          },
-                      ]
-                    : items
-            for (const base of bases) {
-                try {
-                    const tryRes = await fetch(
-                        `${base}/api/page-settings?transport`,
-                        {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                ...(token
-                                    ? { Authorization: `Bearer ${token}` }
-                                    : {}),
-                            },
-                            body: JSON.stringify({
-                                pageId,
-                                items: payloadItems,
-                                locationName,
-                                venue_address,
-                                venue_name_kr: locationName,
-                                transport_location_name: locationName,
-                                bgm: "off", // NOT NULL 제약조건 해결
-                            }),
-                        }
-                    )
-                    console.log(
-                        "TransportTab 저장 - venue_address:",
-                        venue_address
-                    )
-                    res = tryRes
-                    text = await tryRes.text()
-                    if (tryRes.ok) break
-                } catch (e) {
-                    // continue to next base
-                }
-            }
-            if (!res) throw new Error("network error")
+            // Info/Transport는 proxy API가 정답이므로 origin API로 fallthrough 하지 않습니다.
+            // 빈 배열은 빈 배열 그대로 저장합니다. (센티넬 저장 금지)
+            const res = await fetch(`${PROXY_BASE_URL}/api/page-settings?transport`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                    pageId,
+                    items,
+                    locationName,
+                    venue_address,
+                    venue_name_kr: locationName,
+                    transport_location_name: locationName,
+                    bgm: "off", // NOT NULL 제약조건 해결
+                }),
+            })
+            console.log("TransportTab 저장 - venue_address:", venue_address)
+
+            const text = await res.text()
             let result: any = {}
             try {
                 result = JSON.parse(text)
@@ -18323,22 +18089,6 @@ function TransportTab({
                 )
             }
             console.log("교통안내가 저장되었습니다.")
-
-            // 로컬 캐시 업데이트 (닫았다 열어도 즉시 복원되도록)
-            if (typeof window !== "undefined") {
-                try {
-                    if (items.length === 0) {
-                        window.localStorage.removeItem(cacheKey)
-                    } else {
-                        window.localStorage.setItem(
-                            cacheKey,
-                            JSON.stringify(items)
-                        )
-                    }
-                } catch {
-                    // ignore
-                }
-            }
         } catch (e: any) {
             console.error(e?.message || "저장 중 오류가 발생했습니다")
         } finally {
@@ -18881,8 +18631,21 @@ function TransportTab({
                             height: 40,
                             borderRadius: "2px",
                         }}
+                        aria-label="교통 안내 항목 추가"
                     >
                         + 안내 추가
+                    </ButtonBase>
+                    <ButtonBase
+                        onClick={addTemplateItems}
+                        style={{
+                            width: "100%",
+                            height: 40,
+                            borderRadius: "2px",
+                            marginTop: 8,
+                        }}
+                        aria-label="교통 안내 템플릿 불러오기"
+                    >
+                        + 템플릿 불러오기
                     </ButtonBase>
                 </div>
             )}
