@@ -16377,7 +16377,91 @@ function InfoTab({
         },
     ]
 
-    const [items, setItems] = React.useState<InfoItem[]>(DEFAULT_ITEMS)
+    const EMPTY_SENTINEL = "__ROARC_EMPTY__"
+    const cacheKey = React.useMemo(
+        () => `roarc_admin_cache_${pageId}_info`,
+        [pageId]
+    )
+
+    // 안내 사항 기본 데이터는 "최초로 섹션을 오픈했을 때"만 주입합니다.
+    // 이후에는 서버 값(없으면 빈 값)을 그대로 보여주며, 절대 DEFAULT로 덮어쓰지 않습니다.
+    const allowDefaultOnEmpty = React.useMemo(() => {
+        if (typeof window === "undefined") return true
+        if (!pageId) return true
+        const key = `roarc_admin_init_${pageId}_info`
+        try {
+            return !window.localStorage.getItem(key)
+        } catch {
+            return true
+        }
+    }, [pageId])
+
+    React.useEffect(() => {
+        if (typeof window === "undefined") return
+        if (!pageId) return
+        const key = `roarc_admin_init_${pageId}_info`
+        try {
+            if (!window.localStorage.getItem(key)) {
+                window.localStorage.setItem(key, "1")
+            }
+        } catch {
+            // ignore
+        }
+    }, [pageId])
+
+    const isEmptySentinel = React.useCallback(
+        (it: InfoItem) =>
+            it.title === EMPTY_SENTINEL && it.description === EMPTY_SENTINEL,
+        []
+    )
+
+    const [items, setItems] = React.useState<InfoItem[]>(() => {
+        if (typeof window === "undefined") return []
+        if (!pageId) return []
+        try {
+            const raw = window.localStorage.getItem(cacheKey)
+            if (!raw) return []
+            const parsed = JSON.parse(raw) as unknown
+            if (!Array.isArray(parsed)) return []
+            // 최소 형태 검증
+            return parsed
+                .map((it: any, idx: number) => ({
+                    id: typeof it?.id === "string" ? it.id : undefined,
+                    title: String(it?.title ?? ""),
+                    description: String(it?.description ?? ""),
+                    display_order: Number(it?.display_order ?? idx + 1),
+                    image: typeof it?.image === "string" ? it.image : "",
+                }))
+                .filter((it) => !isEmptySentinel(it))
+                .sort((a, b) => a.display_order - b.display_order)
+        } catch {
+            return []
+        }
+    })
+
+    const extractItemsArray = React.useCallback((result: any): any[] | null => {
+        const candidates: unknown[] = [
+            result?.data,
+            result?.data?.items,
+            result?.items,
+            result?.data?.data,
+            result?.data?.data?.items,
+            result?.data?.rows,
+            result?.rows,
+        ]
+        for (const c of candidates) {
+            if (Array.isArray(c)) return c
+            if (typeof c === "string") {
+                try {
+                    const parsed = JSON.parse(c) as unknown
+                    if (Array.isArray(parsed)) return parsed
+                } catch {
+                    // ignore
+                }
+            }
+        }
+        return null
+    }, [])
     const [loading, setLoading] = React.useState(false)
     const [saving, setSaving] = React.useState(false)
     const [uploadingMap, setUploadingMap] = React.useState<
@@ -16668,13 +16752,26 @@ function InfoTab({
             const bases = getApiBases()
             let res: Response | null = null
             let text = ""
-            const payloadItems = items.map((it) => ({
-                id: it.id,
-                title: it.title,
-                description: it.description,
-                display_order: it.display_order,
-                image: it.image || "",
-            }))
+            // 모든 항목을 삭제하고 저장한 경우:
+            // 다음 오픈 시 "저장된 값이 없다"로 오판해 DEFAULT를 주입하지 않도록
+            // sentinel 1개를 저장해 '사용하지 않음/빈 상태'를 명시합니다.
+            const payloadItems =
+                items.length === 0
+                    ? [
+                          {
+                              title: EMPTY_SENTINEL,
+                              description: EMPTY_SENTINEL,
+                              display_order: 1,
+                              image: "",
+                          },
+                      ]
+                    : items.map((it) => ({
+                          id: it.id,
+                          title: it.title,
+                          description: it.description,
+                          display_order: it.display_order,
+                          image: it.image || "",
+                      }))
             for (const base of bases) {
                 try {
                     const tryRes = await fetch(
@@ -16713,6 +16810,22 @@ function InfoTab({
                 )
             }
             console.log("안내 사항이 저장되었습니다.")
+
+            // 로컬 캐시 업데이트 (닫았다 열어도 즉시 복원되도록)
+            if (typeof window !== "undefined") {
+                try {
+                    if (items.length === 0) {
+                        window.localStorage.removeItem(cacheKey)
+                    } else {
+                        window.localStorage.setItem(
+                            cacheKey,
+                            JSON.stringify(items)
+                        )
+                    }
+                } catch {
+                    // ignore
+                }
+            }
         } catch (e: any) {
             console.error(e?.message || "저장 중 오류가 발생했습니다")
         } finally {
@@ -16760,8 +16873,9 @@ function InfoTab({
                 if (!res.ok) throw new Error(`load failed: ${res.status}`)
                 const result = await res.json()
                 if (mounted && result?.success) {
-                    if (Array.isArray(result.data)) {
-                        const loaded: InfoItem[] = result.data.map(
+                    const rawItems = extractItemsArray(result)
+                    if (Array.isArray(rawItems)) {
+                        const loaded: InfoItem[] = rawItems.map(
                             (it: any, idx: number) => ({
                                 id: it.id,
                                 title: String(it.title ?? ""),
@@ -16775,58 +16889,48 @@ function InfoTab({
                                         : "",
                             })
                         )
+                        const withoutSentinel = loaded
+                            .filter((it) => !isEmptySentinel(it))
+                            .sort((a, b) => a.display_order - b.display_order)
 
-                        // localStorage에서 초기화 플래그 확인
-                        const initFlagKey = `info_section_initialized_${pageId}`
-                        const hasBeenInitialized = typeof window !== "undefined" &&
-                            window.localStorage?.getItem(initFlagKey) === "true"
-
-                        if (hasBeenInitialized) {
-                            // 이미 초기화된 경우: API에서 받은 데이터를 그대로 사용 (빈 배열 포함)
-                            setItems(loaded)
-                        } else {
-                            // 최초 접속인 경우: DEFAULT_ITEMS를 로드하고 초기화 플래그 설정
-                            setItems(DEFAULT_ITEMS)
-                            if (typeof window !== "undefined" && window.localStorage) {
+                        if (loaded.some(isEmptySentinel)) {
+                            // 사용자가 전체 삭제 후 저장한 상태(빈 상태 유지)
+                            setItems([])
+                            if (typeof window !== "undefined") {
                                 try {
-                                    window.localStorage.setItem(initFlagKey, "true")
-                                } catch (e) {
-                                    // localStorage 실패 시 무시
+                                    window.localStorage.removeItem(cacheKey)
+                                } catch {
+                                    // ignore
                                 }
                             }
+                            return
                         }
-                    }
-                } else if (mounted) {
-                    // API 실패 시에도 초기화 플래그 확인
-                    const initFlagKey = `info_section_initialized_${pageId}`
-                    const hasBeenInitialized = typeof window !== "undefined" &&
-                        window.localStorage?.getItem(initFlagKey) === "true"
 
-                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
-                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
-                        try {
-                            window.localStorage.setItem(initFlagKey, "true")
-                        } catch (e) {
-                            // localStorage 실패 시 무시
+                        if (withoutSentinel.length > 0) {
+                            // 저장된 rows가 있으면(비어있는 문자열이어도) 절대 덮어쓰지 않고 그대로 표시
+                            setItems(withoutSentinel)
+                            if (typeof window !== "undefined") {
+                                try {
+                                    window.localStorage.setItem(
+                                        cacheKey,
+                                        JSON.stringify(withoutSentinel)
+                                    )
+                                } catch {
+                                    // ignore
+                                }
+                            }
+                            return
                         }
+
+                        // 저장된 항목이 정말 없는 경우에만(= 빈 배열) 최초 1회만 기본값 주입
+                        setItems(allowDefaultOnEmpty ? DEFAULT_ITEMS : [])
+                        return
                     }
                 }
-            } catch (_e) {
-                if (mounted) {
-                    // 에러 시에도 초기화 플래그 확인
-                    const initFlagKey = `info_section_initialized_${pageId}`
-                    const hasBeenInitialized = typeof window !== "undefined" &&
-                        window.localStorage?.getItem(initFlagKey) === "true"
-
-                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
-                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
-                        try {
-                            window.localStorage.setItem(initFlagKey, "true")
-                        } catch (e) {
-                            // localStorage 실패 시 무시
-                        }
-                    }
-                }
+            } catch (e) {
+                // Supabase에 저장된 값이 있어도 네트워크/권한 문제로 로드 실패 시
+                // 기본값으로 덮어쓰지 않습니다.
+                console.warn("InfoTab 로드 실패:", e)
             } finally {
                 if (mounted) setLoading(false)
             }
@@ -16971,7 +17075,89 @@ function TransportTab({
         },
     ]
 
-    const [items, setItems] = React.useState<TransportItem[]>(DEFAULT_ITEMS)
+    const EMPTY_SENTINEL = "__ROARC_EMPTY__"
+    const cacheKey = React.useMemo(
+        () => `roarc_admin_cache_${pageId}_transport`,
+        [pageId]
+    )
+
+    // 교통 안내 기본 데이터는 "최초로 섹션을 오픈했을 때"만 주입합니다.
+    // 이후에는 서버 값(없으면 빈 값)을 그대로 보여주며, 절대 DEFAULT로 덮어쓰지 않습니다.
+    const allowDefaultOnEmpty = React.useMemo(() => {
+        if (typeof window === "undefined") return true
+        if (!pageId) return true
+        const key = `roarc_admin_init_${pageId}_transport`
+        try {
+            return !window.localStorage.getItem(key)
+        } catch {
+            return true
+        }
+    }, [pageId])
+
+    React.useEffect(() => {
+        if (typeof window === "undefined") return
+        if (!pageId) return
+        const key = `roarc_admin_init_${pageId}_transport`
+        try {
+            if (!window.localStorage.getItem(key)) {
+                window.localStorage.setItem(key, "1")
+            }
+        } catch {
+            // ignore
+        }
+    }, [pageId])
+
+    const isEmptySentinel = React.useCallback(
+        (it: TransportItem) =>
+            it.title === EMPTY_SENTINEL && it.description === EMPTY_SENTINEL,
+        []
+    )
+
+    const [items, setItems] = React.useState<TransportItem[]>(() => {
+        if (typeof window === "undefined") return []
+        if (!pageId) return []
+        try {
+            const raw = window.localStorage.getItem(cacheKey)
+            if (!raw) return []
+            const parsed = JSON.parse(raw) as unknown
+            if (!Array.isArray(parsed)) return []
+            return parsed
+                .map((it: any, idx: number) => ({
+                    id: typeof it?.id === "string" ? it.id : undefined,
+                    title: String(it?.title ?? ""),
+                    description: String(it?.description ?? ""),
+                    display_order: Number(it?.display_order ?? idx + 1),
+                }))
+                .filter((it) => !isEmptySentinel(it))
+                .sort((a, b) => a.display_order - b.display_order)
+        } catch {
+            return []
+        }
+    })
+
+    const extractItemsArray = React.useCallback((result: any): any[] | null => {
+        const candidates: unknown[] = [
+            result?.data,
+            result?.data?.items,
+            result?.items,
+            result?.data?.data,
+            result?.data?.data?.items,
+            result?.data?.rows,
+            result?.rows,
+        ]
+        for (const c of candidates) {
+            if (Array.isArray(c)) return c
+            if (typeof c === "string") {
+                try {
+                    const parsed = JSON.parse(c) as unknown
+                    if (Array.isArray(parsed)) return parsed
+                } catch {
+                    // ignore
+                }
+            }
+        }
+        return null
+    }, [])
     const [locationName, setLocationName] = React.useState<string>("")
     const [venue_address, setVenue_address] = React.useState<string>("")
     const addressButtonRef = React.useRef<HTMLButtonElement | null>(null)
@@ -17822,8 +18008,9 @@ function TransportTab({
                 if (!res.ok) throw new Error(`load failed: ${res.status}`)
                 const result = await res.json()
                 if (mounted && result?.success) {
-                    if (Array.isArray(result.data)) {
-                        const loaded: TransportItem[] = result.data.map(
+                    const rawItems = extractItemsArray(result)
+                    if (Array.isArray(rawItems)) {
+                        const loaded: TransportItem[] = rawItems.map(
                             (it: any, idx: number) => ({
                                 id: it.id,
                                 title: String(it.title ?? ""),
@@ -17833,25 +18020,36 @@ function TransportTab({
                                 ),
                             })
                         )
+                        const withoutSentinel = loaded
+                            .filter((it) => !isEmptySentinel(it))
+                            .sort((a, b) => a.display_order - b.display_order)
 
-                        // localStorage에서 초기화 플래그 확인
-                        const initFlagKey = `transport_section_initialized_${pageId}`
-                        const hasBeenInitialized = typeof window !== "undefined" &&
-                            window.localStorage?.getItem(initFlagKey) === "true"
-
-                        if (hasBeenInitialized) {
-                            // 이미 초기화된 경우: API에서 받은 데이터를 그대로 사용 (빈 배열 포함)
-                            setItems(loaded)
-                        } else {
-                            // 최초 접속인 경우: DEFAULT_ITEMS를 로드하고 초기화 플래그 설정
-                            setItems(DEFAULT_ITEMS)
-                            if (typeof window !== "undefined" && window.localStorage) {
+                        if (withoutSentinel.length > 0) {
+                            // 저장된 rows가 있으면(비어있는 문자열이어도) 절대 덮어쓰지 않고 그대로 표시
+                            setItems(withoutSentinel)
+                            if (typeof window !== "undefined") {
                                 try {
-                                    window.localStorage.setItem(initFlagKey, "true")
-                                } catch (e) {
-                                    // localStorage 실패 시 무시
+                                    window.localStorage.setItem(
+                                        cacheKey,
+                                        JSON.stringify(withoutSentinel)
+                                    )
+                                } catch {
+                                    // ignore
                                 }
                             }
+                        } else if (loaded.some(isEmptySentinel)) {
+                            // 사용자가 전체 삭제 후 저장한 상태(빈 상태 유지)
+                            setItems([])
+                            if (typeof window !== "undefined") {
+                                try {
+                                    window.localStorage.removeItem(cacheKey)
+                                } catch {
+                                    // ignore
+                                }
+                            }
+                        } else {
+                            // 저장된 항목이 정말 없는 경우에만(= 빈 배열) 최초 1회만 기본값 주입
+                            setItems(allowDefaultOnEmpty ? DEFAULT_ITEMS : [])
                         }
                     }
                     // locationName이 비어있으면 venue_name 값으로 보정
@@ -17924,38 +18122,23 @@ function TransportTab({
                             )
                         }
                     }
-                } else if (mounted) {
-                    // API 실패 시에도 초기화 플래그 확인
-                    const initFlagKey = `transport_section_initialized_${pageId}`
-                    const hasBeenInitialized = typeof window !== "undefined" &&
-                        window.localStorage?.getItem(initFlagKey) === "true"
-
-                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
-                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
-                        try {
-                            window.localStorage.setItem(initFlagKey, "true")
-                        } catch (e) {
-                            // localStorage 실패 시 무시
-                        }
+                    if (mounted && !Array.isArray(rawItems)) {
+                        // data shape이 기대와 달라도(예: data.items 형태) 위에서 최대한 파싱합니다.
+                        // 여기까지 왔다면 items를 얻지 못한 것이므로, 기본값으로 덮어쓰지 않습니다.
+                        // 단, 최초 오픈이고 아직 아무 것도 없을 때만 기본값을 주입합니다.
+                        setItems((prev) =>
+                            prev.length > 0
+                                ? prev
+                                : allowDefaultOnEmpty
+                                  ? DEFAULT_ITEMS
+                                  : []
+                        )
                     }
                 }
             } catch (error) {
                 console.warn("TransportTab 로드 실패:", error)
-                if (mounted) {
-                    // 에러 시에도 초기화 플래그 확인
-                    const initFlagKey = `transport_section_initialized_${pageId}`
-                    const hasBeenInitialized = typeof window !== "undefined" &&
-                        window.localStorage?.getItem(initFlagKey) === "true"
-
-                    setItems(hasBeenInitialized ? [] : DEFAULT_ITEMS)
-                    if (!hasBeenInitialized && typeof window !== "undefined" && window.localStorage) {
-                        try {
-                            window.localStorage.setItem(initFlagKey, "true")
-                        } catch (e) {
-                            // localStorage 실패 시 무시
-                        }
-                    }
-                }
+                // Supabase에 저장된 값이 있어도 네트워크/권한 문제로 로드 실패 시
+                // 기본값으로 덮어쓰지 않습니다.
             } finally {
                 if (mounted) setLoading(false)
             }
@@ -18080,6 +18263,19 @@ function TransportTab({
             const bases = getApiBases()
             let res: Response | null = null
             let text = ""
+            // 모든 항목을 삭제하고 저장한 경우:
+            // 다음 오픈 시 "저장된 값이 없다"로 오판해 DEFAULT를 주입하지 않도록
+            // sentinel 1개를 저장해 '사용하지 않음/빈 상태'를 명시합니다.
+            const payloadItems =
+                items.length === 0
+                    ? [
+                          {
+                              title: EMPTY_SENTINEL,
+                              description: EMPTY_SENTINEL,
+                              display_order: 1,
+                          },
+                      ]
+                    : items
             for (const base of bases) {
                 try {
                     const tryRes = await fetch(
@@ -18094,7 +18290,7 @@ function TransportTab({
                             },
                             body: JSON.stringify({
                                 pageId,
-                                items,
+                                items: payloadItems,
                                 locationName,
                                 venue_address,
                                 venue_name_kr: locationName,
@@ -18127,6 +18323,22 @@ function TransportTab({
                 )
             }
             console.log("교통안내가 저장되었습니다.")
+
+            // 로컬 캐시 업데이트 (닫았다 열어도 즉시 복원되도록)
+            if (typeof window !== "undefined") {
+                try {
+                    if (items.length === 0) {
+                        window.localStorage.removeItem(cacheKey)
+                    } else {
+                        window.localStorage.setItem(
+                            cacheKey,
+                            JSON.stringify(items)
+                        )
+                    }
+                } catch {
+                    // ignore
+                }
+            }
         } catch (e: any) {
             console.error(e?.message || "저장 중 오류가 발생했습니다")
         } finally {
