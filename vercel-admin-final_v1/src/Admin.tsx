@@ -4276,6 +4276,7 @@ const createInitialPageSettings = () => ({
     type: "papillon",
     vid_url: "",
     cal_txt: "",
+    user_url: "",
 })
 
 type PageSettingsState = ReturnType<typeof createInitialPageSettings>
@@ -4688,6 +4689,15 @@ function AdminMainContent(props: any) {
     const kakaoImageInputRef = useRef<HTMLInputElement | null>(null)
     const [kakaoUploadLoading, setKakaoUploadLoading] = useState(false)
     const addressLayerCleanupRef = React.useRef<(() => void) | null>(null)
+
+    // 공개 URL(user_url) 편집 상태 (page_id는 내부 고정 키로 유지)
+    const [userUrlDraft, setUserUrlDraft] = useState<string>("")
+    const [userUrlTouched, setUserUrlTouched] = useState<boolean>(false)
+    const [userUrlChecking, setUserUrlChecking] = useState<boolean>(false)
+    const [userUrlError, setUserUrlError] = useState<string>("")
+    const [userUrlAvailable, setUserUrlAvailable] = useState<boolean | null>(
+        null
+    )
     const uploadedFileName = React.useMemo(() => {
         if (pageSettings.bgm_type !== "custom" || !pageSettings.bgm_url) {
             return null
@@ -5957,6 +5967,17 @@ function AdminMainContent(props: any) {
         })
     }
 
+    // 성함 입력을 기반으로 기본 user_url 자동 제안 (사용자가 직접 수정하지 않은 경우에만)
+    React.useEffect(() => {
+        if (userUrlTouched) return
+        const groomEn = pageSettings.groom_name_en || ""
+        const brideEn = pageSettings.bride_name_en || ""
+        const suggested = buildDefaultUserUrl(groomEn, brideEn)
+        if (!userUrlDraft && suggested) {
+            setUserUrlDraft(suggested)
+        }
+    }, [pageSettings.groom_name_en, pageSettings.bride_name_en, userUrlTouched, userUrlDraft])
+
     const resetAdminSessionState = () => {
         setActiveTab("basic")
         setOpenSections(new Set(["name"]))
@@ -5996,6 +6017,11 @@ function AdminMainContent(props: any) {
         setKakaoUploadLoading(false)
         setLoginForm({ username: "", password: "" })
         setLoginError("")
+        setUserUrlDraft("")
+        setUserUrlTouched(false)
+        setUserUrlChecking(false)
+        setUserUrlError("")
+        setUserUrlAvailable(null)
     }
 
     // 세션 확인
@@ -6297,6 +6323,134 @@ function AdminMainContent(props: any) {
         }
     }
 
+    const toYYMMDD = (iso: string): string => {
+        try {
+            const v = (iso || "").trim()
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return ""
+            const yy = v.slice(2, 4)
+            const mm = v.slice(5, 7)
+            const dd = v.slice(8, 10)
+            return `${yy}${mm}${dd}`
+        } catch {
+            return ""
+        }
+    }
+
+    const buildDefaultUserUrl = (groomEn: string, brideEn: string): string => {
+        const norm = (s: string) =>
+            (s || "")
+                .toLowerCase()
+                .replace(/\s+/g, "")
+                .replace(/[^a-z0-9]/g, "")
+        return `${norm(groomEn)}${norm(brideEn)}`
+    }
+
+    const sanitizeUserUrl = (raw: string): string => {
+        const lowered = (raw || "").toLowerCase()
+        const stripped = lowered.replace(/[^a-z0-9-]/g, "").replace(/\s+/g, "")
+        const collapsed = stripped.replace(/-+/g, "-")
+        return collapsed.replace(/^-+/, "").replace(/-+$/, "")
+    }
+
+    const validateUserUrl = (userUrl: string): string => {
+        if (!userUrl) return "URL을 입력해주세요."
+        if (userUrl.length < 3) return "URL은 3자 이상이어야 합니다."
+        if (userUrl.length > 40) return "URL은 40자 이하여야 합니다."
+        if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(userUrl)) {
+            return "영문 소문자/숫자/하이픈(-)만 사용할 수 있습니다."
+        }
+        return ""
+    }
+
+    const checkUserUrl = async (candidate: string) => {
+        const dateSeg = toYYMMDD(pageSettings.wedding_date || "")
+        if (!dateSeg) {
+            setUserUrlAvailable(null)
+            setUserUrlError("예식일자를 먼저 입력해주세요. (URL 중복검사에 필요)")
+            return
+        }
+        setUserUrlChecking(true)
+        try {
+            const res = await fetch(`${PROXY_BASE_URL}/api/user-management`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${getAuthToken()}`,
+                },
+                body: JSON.stringify({
+                    action: "checkUserUrl",
+                    user_url: candidate,
+                    date: dateSeg,
+                }),
+            })
+            const json = await res.json()
+            if (json?.success) {
+                setUserUrlAvailable(!!json.available)
+                if (!json.available) {
+                    setUserUrlError("이미 사용 중인 URL입니다.")
+                } else {
+                    setUserUrlError("")
+                }
+                return
+            }
+            setUserUrlAvailable(null)
+            setUserUrlError(json?.error || "URL 중복검사에 실패했습니다.")
+        } catch (e) {
+            setUserUrlAvailable(null)
+            setUserUrlError("URL 중복검사에 실패했습니다.")
+        } finally {
+            setUserUrlChecking(false)
+        }
+    }
+
+    const saveUserUrl = async () => {
+        const candidate = sanitizeUserUrl(userUrlDraft)
+        const formatError = validateUserUrl(candidate)
+        if (formatError) {
+            setUserUrlError(formatError)
+            setUserUrlAvailable(null)
+            return
+        }
+        const dateSeg = toYYMMDD(pageSettings.wedding_date || "")
+        if (!dateSeg) {
+            setUserUrlError("예식일자를 먼저 입력해주세요. (URL 저장에 필요)")
+            return
+        }
+        // 저장 직전에도 중복검사
+        await checkUserUrl(candidate)
+        if (userUrlAvailable === false) return
+
+        setUserUrlChecking(true)
+        try {
+            const res = await fetch(`${PROXY_BASE_URL}/api/user-management`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${getAuthToken()}`,
+                },
+                body: JSON.stringify({
+                    action: "updateUserUrl",
+                    user_url: candidate,
+                    date: dateSeg,
+                }),
+            })
+            const json = await res.json()
+            if (json?.success) {
+                setUserUrlDraft(candidate)
+                setUserUrlError("")
+                setUserUrlAvailable(true)
+                return
+            }
+            setUserUrlAvailable(null)
+            setUserUrlError(json?.error || "URL 저장에 실패했습니다.")
+        } catch (e) {
+            setUserUrlAvailable(null)
+            setUserUrlError("URL 저장에 실패했습니다.")
+        } finally {
+            setUserUrlChecking(false)
+        }
+    }
+
     const loadPageSettings = async (pageId?: string | null) => {
         const targetPageId = pageId ?? currentPageId
         if (!targetPageId) return
@@ -6317,6 +6471,16 @@ function AdminMainContent(props: any) {
                 setPageSettings(result.data)
                 setOriginalPageSettings(result.data)
                 setHasLoadedSettings(true)
+                // user_url은 page_settings 응답에 포함될 수 있음(프록시에서 admin_users.user_url을 합쳐 내려줌)
+                if (!userUrlTouched) {
+                    const nextUserUrl =
+                        typeof result?.data?.user_url === "string"
+                            ? result.data.user_url
+                            : ""
+                    setUserUrlDraft(nextUserUrl || "")
+                    setUserUrlError("")
+                    setUserUrlAvailable(null)
+                }
             }
         } catch (err) {
             console.error("페이지 설정 로드 실패:", err)
@@ -6361,6 +6525,7 @@ function AdminMainContent(props: any) {
         "bgm_type",
         "bgm_autoplay",
         "bgm_vol",
+        "user_url",
     ] as const
 
     type AllowedSettingKey = (typeof allowedSettingKeys)[number]
@@ -8887,9 +9052,9 @@ function AdminMainContent(props: any) {
                         position: "relative", // 키보드 대응
                     }}
                 >
-                    {/* 성함 섹션 */}
+                    {/* 기본 정보 섹션 */}
                     <AccordionSection
-                        title="성함"
+                        title="기본 정보"
                         sectionKey="name"
                         isOpen={openSections.has("name")}
                         onToggle={async () => await toggleSection("name")}
@@ -9356,6 +9521,212 @@ function AdminMainContent(props: any) {
                                                 { silent: true }
                                             )
                                         }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </AccordionSection>
+
+                    {/* URL 편집 섹션 */}
+                    <AccordionSection
+                        title="URL 편집"
+                        sectionKey="url"
+                        isOpen={openSections.has("url")}
+                        onToggle={async () => await toggleSection("url")}
+                    >
+                        <div
+                            style={{
+                                padding: `${theme.space(4)}px ${theme.space(4)}px`,
+                                backgroundColor: "white",
+                                display: "flex",
+                                justifyContent: "flex-start",
+                                alignItems: "center",
+                                gap: theme.space(2.5),
+                            }}
+                        >
+                            <div
+                                style={{
+                                    width: "100%",
+                                    flexDirection: "column",
+                                    display: "flex",
+                                    gap: theme.gap.sm,
+                                }}
+                            >
+                                {/* URL 입력 필드들 */}
+                                <div
+                                    style={{
+                                        flexDirection: "column",
+                                        display: "flex",
+                                        gap: 0,
+                                    }}
+                                >
+                                    <FormField label="사용자 URL">
+                                        <div
+                                            style={{
+                                                width: "calc(100% * 1.1429)",
+                                                transform: "scale(0.875)",
+                                                transformOrigin: "left center",
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                gap: 6,
+                                                marginBottom: 12,
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    width: "100%",
+                                                    height: "calc(40px*1.1429)",
+                                                    padding: 12,
+                                                    background: "white",
+                                                    border: `1px solid ${
+                                                        userUrlError
+                                                            ? "#ef4444"
+                                                            : userUrlAvailable === false
+                                                            ? "#f59e0b"
+                                                            : userUrlAvailable === true
+                                                            ? "#10b981"
+                                                            : theme.color.border
+                                                    }`,
+                                                    borderRadius: 2,
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                }}
+                                            >
+                                                <input
+                                                    type="text"
+                                                    value={userUrlDraft}
+                                                    onChange={(e) => {
+                                                        const rawValue = e.target.value
+                                                        const sanitized = sanitizeUserUrl(rawValue)
+                                                        setUserUrlDraft(sanitized)
+                                                        setUserUrlTouched(true)
+
+                                                        // 실시간 유효성 검사
+                                                        const validationError = validateUserUrl(sanitized)
+                                                        if (validationError) {
+                                                            setUserUrlError(validationError)
+                                                            setUserUrlAvailable(null)
+                                                        } else {
+                                                            setUserUrlError("")
+                                                            // 유효하면 중복 검사 (디바운스)
+                                                            const timeoutId = setTimeout(() => {
+                                                                if (sanitized && sanitized === userUrlDraft) {
+                                                                    checkUserUrl(sanitized)
+                                                                }
+                                                            }, 500)
+                                                            return () => clearTimeout(timeoutId)
+                                                        }
+                                                    }}
+                                                    placeholder="minjunseoyun"
+                                                    disabled={userUrlChecking}
+                                                    style={{
+                                                        width: "100%",
+                                                        border: "none",
+                                                        outline: "none",
+                                                        borderRadius: 2,
+                                                        fontSize: 16,
+                                                        fontFamily: theme.font.body,
+                                                        color: userUrlDraft ? "black" : "#ADADAD",
+                                                    }}
+                                                />
+                                                {userUrlChecking && (
+                                                    <div style={{ marginLeft: 8, color: "#6b7280" }}>
+                                                        검사 중...
+                                                    </div>
+                                                )}
+                                                {userUrlAvailable === true && (
+                                                    <div style={{ marginLeft: 8, color: "#10b981" }}>
+                                                        ✓ 사용 가능
+                                                    </div>
+                                                )}
+                                                {userUrlAvailable === false && (
+                                                    <div style={{ marginLeft: 8, color: "#f59e0b" }}>
+                                                        ✗ 사용 중
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {userUrlError && (
+                                                <div style={{
+                                                    fontSize: 12,
+                                                    color: "#ef4444",
+                                                    marginTop: 4,
+                                                }}>
+                                                    {userUrlError}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </FormField>
+
+                                    {/* 기본값 생성 버튼 */}
+                                    <div style={{ marginBottom: 12 }}>
+                                        <button
+                                            onClick={() => {
+                                                const groomName = (pageSettings.groom_name_en || "").toLowerCase().replace(/\s+/g, '');
+                                                const brideName = (pageSettings.bride_name_en || "").toLowerCase().replace(/\s+/g, '');
+                                                const defaultUrl = groomName + brideName;
+
+                                                setUserUrlDraft(defaultUrl);
+                                                setUserUrlTouched(true);
+                                                // 유효성 검사 및 중복 검사 트리거
+                                                if (defaultUrl) {
+                                                    const validationError = validateUserUrl(defaultUrl);
+                                                    if (validationError) {
+                                                        setUserUrlError(validationError);
+                                                        setUserUrlAvailable(null);
+                                                    } else {
+                                                        setUserUrlError("");
+                                                        checkUserUrl(defaultUrl);
+                                                    }
+                                                }
+                                            }}
+                                            style={{
+                                                padding: "8px 16px",
+                                                backgroundColor: "#f3f4f6",
+                                                border: `1px solid ${theme.color.border}`,
+                                                borderRadius: 4,
+                                                fontSize: 14,
+                                                fontFamily: theme.font.body,
+                                                cursor: "pointer",
+                                                color: "#374151",
+                                            }}
+                                            disabled={!pageSettings.groom_name_en && !pageSettings.bride_name_en}
+                                        >
+                                            영문 이름으로 URL 생성
+                                        </button>
+                                    </div>
+
+                                    {/* 미리보기 */}
+                                    {pageSettings.wedding_date && userUrlDraft && (
+                                        <div style={{
+                                            padding: "12px",
+                                            backgroundColor: "#f9fafb",
+                                            borderRadius: 4,
+                                            border: `1px solid ${theme.color.border}`,
+                                            marginBottom: 12,
+                                        }}>
+                                            <div style={{
+                                                fontSize: 12,
+                                                color: "#6b7280",
+                                                marginBottom: 4,
+                                            }}>
+                                                미리보기 URL:
+                                            </div>
+                                            <div style={{
+                                                fontSize: 14,
+                                                fontFamily: "monospace",
+                                                color: "#1f2937",
+                                                wordBreak: "break-all",
+                                            }}>
+                                                card.roarc.kr/{toYYMMDD(pageSettings.wedding_date)}/{userUrlDraft}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* URL 편집 저장 버튼 */}
+                                <div style={{ width: "100%", marginTop: 12 }}>
+                                    <SaveSectionButton
+                                        onSave={saveUserUrl}
                                     />
                                 </div>
                             </div>
