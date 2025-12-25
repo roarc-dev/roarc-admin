@@ -6437,6 +6437,10 @@ function AdminMainContent(props: any) {
             const json = await res.json()
             if (json?.success) {
                 setUserUrlDraft(candidate)
+                setPageSettings(prev => ({
+                    ...prev,
+                    user_url: candidate
+                }))
                 setUserUrlError("")
                 setUserUrlAvailable(true)
                 return
@@ -6468,14 +6472,33 @@ function AdminMainContent(props: any) {
 
             const result = await response.json()
             if (result.success) {
-                setPageSettings(result.data)
-                setOriginalPageSettings(result.data)
+                // user_url 기본값 설정 로직
+                let processedData = { ...result.data }
+                if (!processedData.user_url || processedData.user_url.trim() === "") {
+                    // 1. page_id와 동일하게 설정
+                    if (targetPageId) {
+                        processedData.user_url = targetPageId
+                    } else {
+                        // 2. page_id가 없다면 신랑과 신부의 영어 이름 부분만 합침
+                        const groomEn = (processedData.groom_name_en || "").trim()
+                        const brideEn = (processedData.bride_name_en || "").trim()
+
+                        // 공백을 제거하고 소문자로 변환하여 합침
+                        const groomParts = groomEn.toLowerCase().split(/\s+/).filter(Boolean)
+                        const brideParts = brideEn.toLowerCase().split(/\s+/).filter(Boolean)
+
+                        processedData.user_url = groomParts.concat(brideParts).join("")
+                    }
+                }
+
+                setPageSettings(processedData)
+                setOriginalPageSettings(processedData)
                 setHasLoadedSettings(true)
                 // user_url은 page_settings 응답에 포함될 수 있음(프록시에서 admin_users.user_url을 합쳐 내려줌)
                 if (!userUrlTouched) {
                     const nextUserUrl =
-                        typeof result?.data?.user_url === "string"
-                            ? result.data.user_url
+                        typeof processedData?.user_url === "string"
+                            ? processedData.user_url
                             : ""
                     setUserUrlDraft(nextUserUrl || "")
                     setUserUrlError("")
@@ -9079,7 +9102,7 @@ function AdminMainContent(props: any) {
                             >
                                 {/* 미리보기 제거됨 */}
 
-                                {/* 입력 필드들 */}
+                                    {/* 입력 필드들 */}
                                 <div
                                     style={{
                                         flexDirection: "column",
@@ -9087,6 +9110,115 @@ function AdminMainContent(props: any) {
                                         gap: 0,
                                     }}
                                 >
+                                    <FormField label="URL">
+                                        <div
+                                            style={{
+                                                width: "calc(100% * 1.1429)",
+                                                transform: "scale(0.875)", // 14px처럼 보이도록 스케일 조정
+                                                transformOrigin: "left center",
+                                                marginBottom: 24,
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    height: "calc(40px*1.1429)",
+                                                    padding: 12,
+                                                    background: "white",
+                                                    border: `1px solid ${theme.color.border}`,
+                                                    borderRadius: 2,
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                }}
+                                            >
+                                                <input
+                                                    type="text"
+                                                    value={userUrlDraft}
+                                                    onChange={async (e) => {
+                                                        const rawValue = (e.target as HTMLInputElement).value
+                                                        const sanitized = sanitizeUserUrl(rawValue)
+
+                                                        // 입력 제한: sanitize된 값으로만 업데이트
+                                                        setUserUrlDraft(sanitized)
+                                                        setUserUrlTouched(true)
+
+                                                        // 실시간 검증
+                                                        if (sanitized) {
+                                                            const validationError = validateUserUrl(sanitized)
+                                                            if (validationError) {
+                                                                setUserUrlError(validationError)
+                                                                setUserUrlAvailable(null)
+                                                            } else {
+                                                                // 형식 검증 통과 시 중복 검사
+                                                                await checkUserUrl(sanitized)
+                                                            }
+                                                        } else {
+                                                            setUserUrlError("")
+                                                            setUserUrlAvailable(null)
+                                                        }
+                                                    }}
+                                                    placeholder="minjunseoyun"
+                                                    style={{
+                                                        width: "100%",
+                                                        border: "none",
+                                                        outline: "none",
+                                                        borderRadius: 2,
+                                                        fontSize: 16,
+                                                        fontFamily:
+                                                            theme.font.body,
+                                                        color:
+                                                            userUrlDraft
+                                                                ? "black"
+                                                                : "#ADADAD",
+                                                    }}
+                                                />
+                                            </div>
+                                            {/* URL 검증 결과 표시 */}
+                                            {userUrlChecking && (
+                                                <div
+                                                    style={{
+                                                        fontSize: 14,
+                                                        color: "#666",
+                                                        marginTop: 4,
+                                                    }}
+                                                >
+                                                    URL 중복 검사 중...
+                                                </div>
+                                            )}
+                                            {userUrlError && (
+                                                <div
+                                                    style={{
+                                                        fontSize: 14,
+                                                        color: "#e74c3c",
+                                                        marginTop: 4,
+                                                    }}
+                                                >
+                                                    {userUrlError}
+                                                </div>
+                                            )}
+                                            {userUrlAvailable === true && !userUrlChecking && (
+                                                <div
+                                                    style={{
+                                                        fontSize: 14,
+                                                        color: "#27ae60",
+                                                        marginTop: 4,
+                                                    }}
+                                                >
+                                                    사용 가능한 URL입니다
+                                                </div>
+                                            )}
+                                            {userUrlAvailable === false && !userUrlChecking && (
+                                                <div
+                                                    style={{
+                                                        fontSize: 14,
+                                                        color: "#e74c3c",
+                                                        marginTop: 4,
+                                                    }}
+                                                >
+                                                    이미 사용 중인 URL입니다
+                                                </div>
+                                            )}
+                                        </div>
+                                    </FormField>
                                     <FormField label="신랑 한글 성함">
                                         <div
                                             style={{
