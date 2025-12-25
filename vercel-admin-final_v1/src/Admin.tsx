@@ -6363,6 +6363,14 @@ function AdminMainContent(props: any) {
     }
 
     const checkUserUrl = async (candidate: string) => {
+        // 로그인 상태 확인
+        const token = getAuthToken()
+        if (!token) {
+            setUserUrlAvailable(null)
+            setUserUrlError("로그인이 필요합니다.")
+            return
+        }
+
         const dateSeg = toYYMMDD(pageSettings.wedding_date || "")
         if (!dateSeg) {
             setUserUrlAvailable(null)
@@ -6375,7 +6383,7 @@ function AdminMainContent(props: any) {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${getAuthToken()}`,
+                    Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify({
                     action: "checkUserUrl",
@@ -6384,6 +6392,19 @@ function AdminMainContent(props: any) {
                 }),
             })
             const json = await res.json()
+
+            // HTTP 상태 코드에 따른 에러 처리
+            if (!res.ok) {
+                if (res.status === 401) {
+                    setUserUrlAvailable(null)
+                    setUserUrlError("인증이 만료되었습니다. 다시 로그인해주세요.")
+                    return
+                }
+                setUserUrlAvailable(null)
+                setUserUrlError(json?.error || `서버 오류 (${res.status})`)
+                return
+            }
+
             if (json?.success) {
                 setUserUrlAvailable(!!json.available)
                 if (!json.available) {
