@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { addPropertyControls, ControlType } from "framer"
 
-// 프록시 서버 URL (고정된 Production URL) - AccountBtn.tsx 패턴과 동일
-const PROXY_BASE_URL = "https://wedding-admin-proxy.vercel.app"
+// Next.js 환경에서 환경 변수 사용
+const PROXY_BASE_URL = process.env.NEXT_PUBLIC_PROXY_BASE_URL || "https://wedding-admin-proxy.vercel.app"
 
 // 토큰 관리
 function getAuthToken() {
@@ -412,7 +411,7 @@ async function deleteRSVPPage(pageId: string): Promise<any> {
 interface User {
     id: string
     username: string
-    name: string
+    name: string | null
     is_active: boolean
     created_at: string
     last_login?: string
@@ -470,6 +469,9 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
     const [activeTab, setActiveTab] = useState<
         "all" | "pending" | "active" | "expired"
     >("all")
+
+    // 검색 상태
+    const [searchTerm, setSearchTerm] = useState<string>("")
 
     // 페이지네이션 상태
     const [currentPage, setCurrentPage] = useState<number>(1)
@@ -596,7 +598,7 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
         setUserForm({
             username: user.username,
             password: "",
-        name: user.name,
+        name: user.name || "",
         is_active: user.is_active,
         newPassword: "",
         page_id: user.page_id || "",
@@ -802,7 +804,7 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
     // 사용자 삭제
     const handleDeleteUser = async (user: User) => {
         const deleteAllData = confirm(
-            `'${user.name}' 사용자를 삭제하시겠습니까?\n\n` +
+            `'${user.name || "이름 없음"}' 사용자를 삭제하시겠습니까?\n\n` +
                 `⚠️ 확인을 누르면 모든 데이터가 삭제됩니다:\n` +
                 `- 사용자 계정\n` +
                 `- Page ID: ${user.page_id || "없음"}\n` +
@@ -815,7 +817,7 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
             !confirm(
                 deleteAllData
                     ? "⚠️ 경고: 모든 데이터를 영구적으로 삭제합니다. 계속하시겠습니까?"
-                    : `'${user.name}' 사용자 계정만 삭제하시겠습니까?`
+                    : `'${user.name || "이름 없음"}' 사용자 계정만 삭제하시겠습니까?`
             )
         )
             return
@@ -894,17 +896,35 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
 
     // 탭별 사용자 필터링
     const getFilteredUsers = () => {
+        let filteredByTab: User[]
+
         switch (activeTab) {
             case "pending":
-                return pendingUsers
+                filteredByTab = pendingUsers
+                break
             case "active":
-                return activeUsers
+                filteredByTab = activeUsers
+                break
             case "expired":
-                return expiredUsers
+                filteredByTab = expiredUsers
+                break
             case "all":
             default:
-                return users
+                filteredByTab = users
+                break
         }
+
+        // 검색어로 추가 필터링
+        if (searchTerm.trim()) {
+            const searchLower = searchTerm.toLowerCase()
+            return filteredByTab.filter(user =>
+                user.username.toLowerCase().includes(searchLower) ||
+                (user.name && user.name.toLowerCase().includes(searchLower)) ||
+                (user.page_id && user.page_id.toLowerCase().includes(searchLower))
+            )
+        }
+
+        return filteredByTab
     }
 
     const filteredUsers = getFilteredUsers()
@@ -1202,6 +1222,100 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
                 )}
             </AnimatePresence>
 
+            {/* 검색 영역 */}
+            <div
+                style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    backgroundColor: "white",
+                    padding: "16px",
+                    borderRadius: "8px",
+                    boxShadow: "0 2px 4px rgba(0, 0, 0, 0.05)",
+                }}
+            >
+                <div style={{ flex: 1, position: "relative" }}>
+                    <div
+                        style={{
+                            position: "relative",
+                            width: "100%",
+                        }}
+                    >
+                        <input
+                            type="text"
+                            placeholder="사용자명, 아이디, Page ID로 검색..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            style={{
+                                width: "100%",
+                                padding: "12px 16px 12px 40px",
+                                border: "2px solid #e5e7eb",
+                                borderRadius: "8px",
+                                fontSize: "14px",
+                                outline: "none",
+                                boxSizing: "border-box",
+                                backgroundColor: "white",
+                                color: "#1f2937",
+                            }}
+                        />
+                        <div
+                            style={{
+                                position: "absolute",
+                                left: "12px",
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                fontSize: "16px",
+                                color: "#9ca3af",
+                            }}
+                        >
+                            🔍
+                        </div>
+                        {searchTerm && (
+                            <button
+                                onClick={() => setSearchTerm("")}
+                                style={{
+                                    position: "absolute",
+                                    right: "12px",
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    background: "none",
+                                    border: "none",
+                                    fontSize: "16px",
+                                    color: "#9ca3af",
+                                    cursor: "pointer",
+                                    padding: "4px",
+                                    borderRadius: "50%",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    width: "24px",
+                                    height: "24px",
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = "#f3f4f6"
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = "transparent"
+                                }}
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+                </div>
+                {searchTerm && (
+                    <div
+                        style={{
+                            fontSize: "14px",
+                            color: "#6b7280",
+                            whiteSpace: "nowrap",
+                        }}
+                    >
+                        검색 결과: {filteredUsers.length}명
+                    </div>
+                )}
+            </div>
+
             {/* 탭 메뉴 */}
             <div
                 style={{
@@ -1292,7 +1406,7 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
                                             margin: "0 0 5px 0",
                                         }}
                                     >
-                                        {user.name} ({user.username})
+                                        {user.name || "이름 없음"} ({user.username})
                                     </h4>
                                     <p
                                         style={{
@@ -1539,7 +1653,7 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
                                             margin: "0 0 5px 0",
                                         }}
                                     >
-                                        {user.name} ({user.username})
+                                        {user.name || "이름 없음"} ({user.username})
                                         {user.approval_status === "pending" &&
                                             " - 승인 대기"}
                                         {user.approval_status === "rejected" &&
@@ -2163,7 +2277,7 @@ export default function UserManagement(props: { style?: React.CSSProperties }) {
                                         margin: "0 0 10px 0",
                                     }}
                                 >
-                                    <strong>{approvingUser.name}</strong> (
+                                    <strong>{approvingUser.name || "이름 없음"}</strong> (
                                     {approvingUser.username})님을
                                     승인하시겠습니까?
                                 </p>
@@ -2416,8 +2530,3 @@ function InputField({
         </div>
     )
 }
-
-// Property Controls
-addPropertyControls(UserManagement, {
-    // 필요한 경우 프로퍼티 컨트롤 추가
-})
